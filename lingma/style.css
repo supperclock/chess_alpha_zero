@@ -1,0 +1,297 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Microsoft YaHei', sans-serif;
+    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 20px;
+}
+
+.container {
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+    padding: 20px;
+    text-align: center;
+    max-width: 800px;
+    width: 100%;
+}
+
+h1 {
+    color: #8B0000;
+    margin-bottom: 20px;
+    font-size: 2.5em;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+}
+
+.game-info {
+    display: flex;
+    justify-content: space-around;
+    margin-bottom: 20px;
+    padding: 10px;
+    background: #f8f8f8;
+    border-radius: 5px;
+    font-size: 1.2em;
+}
+
+.status, .game-status {
+    font-weight: bold;
+}
+
+#current-player.red {
+    color: #FF0000;
+}
+
+#current-player.black {
+    color: #000000;
+}
+
+#game-status.playing {
+    color: #008000;
+}
+
+#game-status.red_won {
+    color: #FF0000;
+}
+
+#game-status.black_won {
+    color: #000000;
+}
+
+.chessboard {
+    display: grid;
+    grid-template-columns: repeat(9, 1fr);
+    grid-template-rows: repeat(10, 1fr);
+    width: 90vmin;
+    height: 100vmin;
+    max-width: 600px;
+    max-height: 700px;
+    margin: 0 auto;
+    background: #e7b18d;
+    background-image: 
+        linear-gradient(to bottom, transparent 70%, #000 70%),
+        linear-gradient(to right, transparent 70%, #000 70%);
+    background-size: 
+        100% 10%,
+        12.5% 100%;
+    border: 2px solid #5d4037;
+    position: relative;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+}
+
+/* 绘制九宫格线条 */
+.chessboard::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 30%;
+    width: 40%;
+    height: 30%;
+    border: 2px solid #000;
+    border-top: none;
+    border-bottom: none;
+    box-sizing: border-box;
+}
+
+.chessboard::after {
+    content: "";
+    position: absolute;
+    top: 70%;
+    left: 30%;
+    width: 40%;
+    height: 30%;
+    border: 2px solid #000;
+    border-top: none;
+    border-bottom: none;
+    box-sizing: border-box;
+}
+
+/* 绘制九宫格斜线 */
+.chessboard .palace-lines {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+.chessboard .palace-line {
+    position: absolute;
+    background: #000;
+}
+
+/* 上方九宫格斜线 */
+.chessboard .palace-line.top-left {
+    top: 0%;
+    left: 30%;
+    width: 2px;
+    height: 30%;
+    transform-origin: top left;
+    transform: rotate(53deg);
+}
+
+.chessboard .palace-line.top-right {
+    top: 0%;
+    left: 70%;
+    width: 2px;
+    height: 30%;
+    transform-origin: top right;
+    transform: rotate(-53deg);
+}
+
+/* 下方九宫格斜线 */
+.chessboard .palace-line.bottom-left {
+    top: 70%;
+    left: 30%;
+    width: 2px;
+    height: 30%;
+    transform-origin: bottom left;
+    transform: rotate(-53deg);
+}
+
+.chessboard .palace-line.bottom-right {
+    top: 70%;
+    left: 70%;
+    width: 2px;
+    height: 30%;
+    transform-origin: bottom right;
+    transform: rotate(53deg);
+}
+
+.square {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+    cursor: pointer;
+    user-select: none;
+}
+
+.square.selected {
+    background-color: rgba(144, 238, 144, 0.5);
+}
+
+.square.valid-move {
+    position: relative;
+}
+
+.square.valid-move::after {
+    content: "";
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: rgba(0, 128, 0, 0.3);
+}
+
+.piece {
+    width: 80%;
+    height: 80%;
+    border-radius: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-weight: bold;
+    font-size: 1.8rem;
+    z-index: 10;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+    transition: transform 0.2s;
+    border: 2px solid #333;
+}
+
+.piece:hover {
+    transform: scale(1.1);
+}
+
+.piece.red {
+    background: #FFD700;
+    color: #8B0000;
+}
+
+.piece.black {
+    background: #8B4513;
+    color: #FFFFFF;
+}
+
+.controls {
+    margin-top: 20px;
+}
+
+#reset-btn {
+    padding: 12px 30px;
+    font-size: 1.1em;
+    background: #8B0000;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.3s;
+}
+
+#reset-btn:hover {
+    background: #A52A2A;
+}
+
+.message {
+    margin-top: 20px;
+    padding: 15px;
+    font-size: 1.2em;
+    font-weight: bold;
+    min-height: 2em;
+}
+
+.message.error {
+    color: #FF0000;
+}
+
+.message.success {
+    color: #008000;
+}
+
+/* 河界文字 */
+.chessboard .river {
+    position: absolute;
+    width: 100%;
+    text-align: center;
+    font-size: 2.5rem;
+    font-weight: bold;
+    color: rgba(0, 0, 0, 0.7);
+    pointer-events: none;
+}
+
+.chessboard .river.top {
+    top: 40%;
+}
+
+.chessboard .river.bottom {
+    top: 50%;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .container {
+        padding: 10px;
+    }
+    
+    h1 {
+        font-size: 2em;
+    }
+    
+    .piece {
+        font-size: 1.2rem;
+    }
+    
+    .game-info {
+        flex-direction: column;
+        gap: 10px;
+    }
+}

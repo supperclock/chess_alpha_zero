@@ -1,0 +1,33 @@
+body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+    background-color: #f5f5dc;
+}
+
+.chess-board {
+    position: relative;
+    width: 450px;
+    height: 500px;
+    background-color: #e8c887;
+    border: 2px solid #8b4513;
+}
+
+.grid-container {
+    display: grid;
+    grid-template-columns: repeat(9, 1fr);
+    grid-template-rows: repeat(10, 1fr);
+    width: 100%;
+    height: 100%;
+}
+
+.pieces-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}

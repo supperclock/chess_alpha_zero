@@ -1,0 +1,65 @@
+body {
+    background: #f5f5dc;
+    font-family: 'Microsoft YaHei', 'SimHei', Arial, sans-serif;
+    text-align: center;
+}
+
+h1 {
+    color: #b22222;
+    margin-top: 20px;
+}
+
+#chessboard {
+    display: inline-block;
+    margin-top: 30px;
+    border: 4px solid #8b5c2a;
+    background: #ffe4b5;
+    box-shadow: 0 0 20px #aaa;
+    border-radius: 10px;
+    position: relative;
+}
+
+.chess-row {
+    display: flex;
+}
+
+.chess-cell {
+    width: 60px;
+    height: 60px;
+    border: 1px solid #8b5c2a;
+    position: relative;
+    box-sizing: border-box;
+}
+
+.chess-piece {
+    width: 48px;
+    height: 48px;
+    line-height: 48px;
+    border-radius: 50%;
+    background: white;
+    border: 2px solid #b22222;
+    color: #b22222;
+    font-size: 28px;
+    font-weight: bold;
+    text-align: center;
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    cursor: pointer;
+    user-select: none;
+    transition: box-shadow 0.2s;
+    box-shadow: 0 2px 8px #ccc;
+}
+
+.chess-piece.black {
+    border-color: #222;
+    color: #222;
+}
+
+.chess-cell.selected {
+    background: #ffe066;
+}
+
+.chess-cell.moveable {
+    background: #b7e4c7;
+}

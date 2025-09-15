@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>中国象棋</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>中国象棋</h1>
+        <div class="game-info">
+            <div class="status">当前玩家: <span id="current-player">红方</span></div>
+            <div class="game-status">游戏状态: <span id="game-status">进行中</span></div>
+        </div>
+        <div class="chessboard" id="chessboard">
+            <!-- 棋盘将通过JavaScript动态生成 -->
+        </div>
+        <div class="controls">
+            <button id="reset-btn">重新开始</button>
+        </div>
+        <div class="message" id="message"></div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>

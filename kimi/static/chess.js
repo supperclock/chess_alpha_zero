@@ -3,6 +3,7 @@ const ROWS = 10, COLS = 9;
 let board = Array.from({length:ROWS},()=>Array(COLS).fill(null)); // 二维数组：存棋子 DOM
 let currentSide = 'red';      // 红先
 let selected  = null;         // 当前被选中的棋子 DOM
+let gameOver = false; // 新增：游戏结束标志
 
 /* 初始排布（同你原来写的） */
 const initialPieces = {
@@ -36,6 +37,7 @@ function initBoard(){
         /* 只允许红方操作 */
         if(color === 'red') {
           el.addEventListener('click', e=>{
+            if(gameOver) return; // 游戏结束禁止操作
             e.stopPropagation();
             if(el.classList.contains(currentSide+'-piece')){
               // 点己方：选中
@@ -55,6 +57,7 @@ function initBoard(){
     });
     /* 点空白处走子（只允许红方） */
     box.addEventListener('click', e=>{
+      if(gameOver) return; // 游戏结束禁止操作
       if(!selected || currentSide !== 'red') return;
       const rect = box.getBoundingClientRect();
       const x = Math.round((e.clientX - rect.left - 25)/50);
@@ -75,6 +78,7 @@ function inBoard(x,y){return x>=0&&x<COLS&&y>=0&&y<ROWS;}
 
 /* ========== 走子流程 ========== */
 function tryMove(pieceEl, toX, toY){
+  if(gameOver) return; // 游戏结束禁止操作
   const from = {...xy(pieceEl), piece:pieceEl};
   const target = board[toY][toX];
   if(!canMove(from, {x:toX,y:toY}, target)) return; // 不合规则
@@ -104,7 +108,10 @@ function tryMove(pieceEl, toX, toY){
   pieceEl.classList.add('last-move');
 
   // === 新增：胜负判断 ===
-  if (checkGameOver()) return;
+  if (checkGameOver()) {
+    gameOver = true; // 游戏结束
+    return;
+  }
 
   // === 新增：将军提示 ===
   const opponent = currentSide === 'red' ? 'black' : 'red';
@@ -124,7 +131,7 @@ function tryMove(pieceEl, toX, toY){
   document.querySelectorAll('.piece').forEach(p=>p.style.boxShadow='');
 
   // === 新增：电脑自动走黑棋 ===
-  if(currentSide === 'black') {
+  if(currentSide === 'black' && !gameOver) {
     setTimeout(()=>{
       aiMoveBlack();
     }, 500);
@@ -207,8 +214,9 @@ function _getAllLegalMovesInternal_board(boardState, side) {
 // 在 aiMoveBlack 中使用 minimax（以 black 为电脑）
 // depth: 搜索深度（2 或 3）
 function aiMoveBlack() {
+  if(gameOver) return; // 游戏结束禁止AI走棋
   const boardState = cloneBoardToState(board);
-  const depth = 3; // 可调：2 快，3 更强但慢
+  const depth = 4; // 可调：2 快，3 更强但慢
   const best = minimaxRoot(boardState, depth, 'black');
   if (!best) return;
   // 把找到的最好走法映射到 DOM：找到对应的 piece DOM（用 board[][] 当前坐标）

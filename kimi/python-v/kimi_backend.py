@@ -1,38 +1,30 @@
-from flask import Flask, request, jsonify, Response, send_from_directory, stream_with_context
+from flask import Flask, request, jsonify, send_from_directory, stream_with_context
 from flask_cors import CORS
-import requests
 import os
-from ai import minimax_root, check_game_over
-import logging
+from ai import minimax_root, check_game_over,logging
 
-logging.basicConfig(
-    filename='kimi_backend.log',
-    level=logging.INFO,
-    format='[%(asctime)s] %(levelname)s: %(message)s'
-)
 
 app = Flask(__name__)
 CORS(app)
 
+
 @app.route('/ai_move', methods=['POST'])
-def ai_move():
-    try:
-      logging.info(f"/ai_move {request.method} data={request.json}")
-      data = request.json
-      board_state = data['board']
-      side_to_move = data['side']
-        
-      depth = 4
-      best_move = minimax_root(board_state, depth, side_to_move)
-      return jsonify(best_move)
-    except Exception as e:
-      logging.error(f"Error in /ai_move: {e}")
-      return jsonify({"error": str(e)}), 500
+def ai_move():    
+    # logging.info(f"/ai_move {request.method} data={request.json}")
+    data = request.json
+    board_state = data['board']
+    side_to_move = data['side']
+    
+    depth = 2
+    best_move = minimax_root(board_state, depth, side_to_move)
+    # logging.info(f"Best move: {best_move}")
+    return jsonify(best_move)
+    
 
 @app.route('/check_game_over', methods=['POST'])
 def check_game_over_endpoint():
     try:
-      logging.info(f"[LOG] /check_game_over {request.method} data={request.json}")
+    #   logging.info(f"[LOG] /check_game_over {request.method} data={request.json}")
       data = request.json
       data = request.json
       board_state = data['board']

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>中国象棋棋盘</title>
     <script src="static/marked.min.js"></script>
-    <script src="static/chess.js"></script>   
+    <script src="static/chess.js"></script> 
     <style>
         body {
             font-family: "Microsoft YaHei", "SimHei", sans-serif;
@@ -23,6 +23,12 @@
             flex-direction: row;
             gap: 32px;
             align-items: flex-start;
+        }
+
+        .chess-panel {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
 
         #commentary-panel {
@@ -264,10 +270,10 @@
         /* 棋盘标题 */
         .board-title {
             text-align: center;
-            font-size: 32px;
+            font-size: 16px;
             font-weight: bold;
             color: #8b4513;
-            margin-bottom: 20px;
+            margin-bottom: 10px;
             text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
         }
 
@@ -318,11 +324,7 @@
         }
 
         .pause-btn {
-            position: fixed;
-            bottom: 150px;
-            left: 50%;
-            transform: translateX(-50%);
-            padding: 10px 32px;
+            padding: 5px 32px;
             font-size: 18px;
             background: #f5deb3;
             color: #8b4513;
@@ -330,8 +332,8 @@
             border-radius: 8px;
             cursor: pointer;
             box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-            z-index: 1000;
             transition: background 0.2s, color 0.2s;
+            margin-top: 50px;
         }
         .pause-btn:hover {
             background: #ffe4b5;
@@ -341,62 +343,56 @@
 </head>
 <body>
     <div class="main-layout">
-        <div class="chess-container">            
-            <div class="board-title">中国象棋</div>
-            <div class="chessboard" id="chessboard">
-                                <div class="grid-lines">
-                                        <div class="horizontal-line" style="top: 0;"></div>
-                    <div class="horizontal-line" style="top: 50px;"></div>
-                    <div class="horizontal-line" style="top: 100px;"></div>
-                    <div class="horizontal-line" style="top: 150px;"></div>
-                    <div class="horizontal-line bold-line" style="top: 200px;"></div>
-                    <div class="horizontal-line bold-line" style="top: 250px;"></div>
-                    <div class="horizontal-line" style="top: 300px;"></div>
-                    <div class="horizontal-line" style="top: 350px;"></div>
-                    <div class="horizontal-line" style="top: 400px;"></div>
-                    <div class="horizontal-line" style="top: 450px;"></div>
-                    
-                                        <div class="vertical-line" style="left: 0; height: 450px;"></div>
-                    <div class="vertical-line" style="left: 400px; height: 450px;"></div>
+        <div class="chess-panel">
+            <div class="chess-container">             
+                <div class="board-title">中国象棋</div>
+                <div class="chessboard" id="chessboard">
+                    <div class="grid-lines">
+                        <div class="horizontal-line" style="top: 0;"></div>
+                        <div class="horizontal-line" style="top: 50px;"></div>
+                        <div class="horizontal-line" style="top: 100px;"></div>
+                        <div class="horizontal-line" style="top: 150px;"></div>
+                        <div class="horizontal-line bold-line" style="top: 200px;"></div>
+                        <div class="horizontal-line bold-line" style="top: 250px;"></div>
+                        <div class="horizontal-line" style="top: 300px;"></div>
+                        <div class="horizontal-line" style="top: 350px;"></div>
+                        <div class="horizontal-line" style="top: 400px;"></div>
+                        <div class="horizontal-line" style="top: 450px;"></div>
+                        
+                        <div class="vertical-line" style="left: 0; height: 450px;"></div>
+                        <div class="vertical-line" style="left: 400px; height: 450px;"></div>
 
-                    <div class="vertical-line" style="left: 50px; top: 0; height: 200px;"></div>
-                    <div class="vertical-line" style="left: 50px; top: 250px; height: 200px;"></div>
-                    <div class="vertical-line" style="left: 100px; top: 0; height: 200px;"></div>
-                    <div class="vertical-line" style="left: 100px; top: 250px; height: 200px;"></div>
-                    <div class="vertical-line" style="left: 150px; top: 0; height: 200px;"></div>
-                    <div class="vertical-line" style="left: 150px; top: 250px; height: 200px;"></div>
-                    <div class="vertical-line" style="left: 200px; top: 0; height: 200px;"></div>
-                    <div class="vertical-line" style="left: 200px; top: 250px; height: 200px;"></div>
-                    <div class="vertical-line" style="left: 250px; top: 0; height: 200px;"></div>
-                    <div class="vertical-line" style="left: 250px; top: 250px; height: 200px;"></div>
-                    <div class="vertical-line" style="left: 300px; top: 0; height: 200px;"></div>
-                    <div class="vertical-line" style="left: 300px; top: 250px; height: 200px;"></div>
-                    <div class="vertical-line" style="left: 350px; top: 0; height: 200px;"></div>
-                    <div class="vertical-line" style="left: 350px; top: 250px; height: 200px;"></div>
-                    
-                                                            <div class="diagonal-line" style="top:0; left:150px; width:141px; height:1px; transform:rotate(45deg); transform-origin:left top;"></div>
-                    <div class="diagonal-line" style="top:100px; left:150px; width:141px; height:1px; transform:rotate(-45deg); transform-origin:left bottom;"></div>
+                        <div class="vertical-line" style="left: 50px; top: 0; height: 200px;"></div>
+                        <div class="vertical-line" style="left: 50px; top: 250px; height: 200px;"></div>
+                        <div class="vertical-line" style="left: 100px; top: 0; height: 200px;"></div>
+                        <div class="vertical-line" style="left: 100px; top: 250px; height: 200px;"></div>
+                        <div class="vertical-line" style="left: 150px; top: 0; height: 200px;"></div>
+                        <div class="vertical-line" style="left: 150px; top: 250px; height: 200px;"></div>
+                        <div class="vertical-line" style="left: 200px; top: 0; height: 200px;"></div>
+                        <div class="vertical-line" style="left: 200px; top: 250px; height: 200px;"></div>
+                        <div class="vertical-line" style="left: 250px; top: 0; height: 200px;"></div>
+                        <div class="vertical-line" style="left: 250px; top: 250px; height: 200px;"></div>
+                        <div class="vertical-line" style="left: 300px; top: 0; height: 200px;"></div>
+                        <div class="vertical-line" style="left: 300px; top: 250px; height: 200px;"></div>
+                        <div class="vertical-line" style="left: 350px; top: 0; height: 200px;"></div>
+                        <div class="vertical-line" style="left: 350px; top: 250px; height: 200px;"></div>
+                        
+                        <div class="diagonal-line" style="top:0; left:150px; width:141px; height:1px; transform:rotate(45deg); transform-origin:left top;"></div>
+                        <div class="diagonal-line" style="top:100px; left:150px; width:141px; height:1px; transform:rotate(-45deg); transform-origin:left bottom;"></div>
 
-                                        <div class="diagonal-line" style="top:450px; left:150px; width:141px; height:1px; transform:rotate(-45deg); transform-origin:left top;"></div>
-                    <div class="diagonal-line" style="top:350px; left:150px; width:141px; height:1px; transform:rotate(45deg); transform-origin:left bottom;"></div>
+                        <div class="diagonal-line" style="top:450px; left:150px; width:141px; height:1px; transform:rotate(-45deg); transform-origin:left top;"></div>
+                        <div class="diagonal-line" style="top:350px; left:150px; width:141px; height:1px; transform:rotate(45deg); transform-origin:left bottom;"></div>
+                    </div>
+                    
+                    <div class="river-text">
+                        <span>楚河</span>
+                        <span>汉界</span>
+                    </div>
                 </div>
-                
-                                <div class="river-text">
-                    <span>楚河</span>
-                    <span>汉界</span>
-                </div>
+                <div id="game-status" class="game-status"></div>
+                <button id="pause-btn" class="pause-btn">暂停</button>
             </div>
-            <div id="game-status" class="game-status"></div>
-        </div>
-        <div id="commentary-panel">
-            <div id="response-section" class="response-section">                
-                <h3>解说内容</h3>
-                <div id="response-content"></div>
             </div>
-        </div>
     </div>
-
-        <button id="pause-btn" class="pause-btn">暂停</button>
-
 </body>
 </html>

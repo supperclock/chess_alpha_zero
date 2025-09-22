@@ -100,6 +100,41 @@ def generate_legal_moves(board, side):
             if side=='black' and not p.islower(): continue
             moves.extend(generate_piece_moves(board, r, c))
     # filter moves to avoid capturing same-side piece is already done by generate_piece_moves
+    moves = filter_moves_no_self_check(board, moves, side)
+    return moves
+def filter_moves_no_self_check(board, moves, side):
+    """过滤掉导致自己将军的走法"""
+    filtered = []
+    opp = 'red' if side=='black' else 'black'
+    for m in moves:
+        nb, _ = apply_move(board, m)
+        gens = find_generals(nb)
+        my_gen_pos = gens.get(side, None)
+        if my_gen_pos is None:
+            # 自己的将没了，说明非法
+            continue
+        # 检查对方是否能攻击到我的将
+        opp_moves = generate_legal_moves_basic(nb, opp)  # 用不含自检过滤的版本
+        attacked = False
+        for om in opp_moves:
+            (_, _), (tr, tc) = om
+            if (tr, tc) == my_gen_pos:
+                attacked = True
+                break
+        if not attacked:
+            filtered.append(m)
+    return filtered
+
+def generate_legal_moves_basic(board, side):
+    """基础版，不做‘走后被将’检测，用于 filter 检查"""
+    moves = []
+    for r in range(10):
+        for c in range(9):
+            p = board[r][c]
+            if p == '.': continue
+            if side=='red' and not p.isupper(): continue
+            if side=='black' and not p.islower(): continue
+            moves.extend(generate_piece_moves(board, r, c))
     return moves
 
 def generate_piece_moves(board, r, c):
@@ -249,8 +284,8 @@ def is_terminal(board):
 # We'll represent board as 14x10x9 tensor: 7 piece types x 2 sides + side-to-move plane (optional)
 PIECE_TYPES = ['r','h','c','e','a','g','s']  # base types (lowercase)
 def board_to_tensor(board, side_to_move):
-    # returns shape (14,10,9)
-    planes = np.zeros((14,10,9), dtype=np.float32)
+    # returns shape (15,10,9)
+    planes = np.zeros((15,10,9), dtype=np.float32)
     for r in range(10):
         for c in range(9):
             p = board[r][c]
@@ -259,7 +294,7 @@ def board_to_tensor(board, side_to_move):
             plane = idx + (0 if p.islower() else 7)  # black side first
             planes[plane, r, c] = 1.0
     # side plane
-    planes[13,:,:] = 1.0 if side_to_move=='red' else 0.0
+    planes[14,:,:] = 1.0 if side_to_move=='red' else 0.0
     return planes
 
 if TORCH_AVAILABLE:
@@ -276,7 +311,7 @@ if TORCH_AVAILABLE:
             return F.relu(out + x)
 
     class AlphaNet(nn.Module):
-        def __init__(self, in_channels=14, channels=64, n_resblocks=3):
+        def __init__(self, in_channels=15, channels=64, n_resblocks=3):
             super().__init__()
             self.conv = nn.Conv2d(in_channels, channels, kernel_size=3, padding=1)
             self.bn = nn.BatchNorm2d(channels)
@@ -479,7 +514,7 @@ def self_play_game(mcts, max_moves=200, temp=1.0):
     for t in traj:
         # If side at that t.state was 'red' when we recorded side plane=1. We'll interpret value = terminal_outcome for red, -terminal_outcome for black? 
         # Actually terminal_outcome = +1 if red wins. Value from perspective of side_to_move at that state = terminal_outcome if side was red else -terminal_outcome
-        side_at_state = 'red' if t.state[13,0,0]==1.0 else 'black'  # our side plane encoding
+        side_at_state = 'red' if t.state[14,0,0]==1.0 else 'black'  # our side plane encoding
         value = terminal_outcome if side_at_state=='red' else -terminal_outcome
         filled.append(Transition(t.state, t.pi, value))
     return filled, terminal_outcome

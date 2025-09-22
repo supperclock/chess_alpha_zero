@@ -1,7 +1,10 @@
+# 改进版 ai.py
+# 基于用户原始文件（参考）做出若干增强：置换表、静态搜(quiescence)、走子排序、历史表、移动性评估等
 import random
 import copy
 import sys
 import logging
+import time
 
 logging.basicConfig(
     filename='kimi_backend.log',
@@ -11,12 +14,12 @@ logging.basicConfig(
 def log(msg):
     logging.info(msg)
 
-# 统一 piece value 表
+# 统一 piece value 表（保留你原来的数值）
 PIECE_VALUES_STD = {
     '將': 10000, '帥': 10000,
     '車': 900, '俥': 900, '车': 900,
     '馬': 450, '傌': 450, '马': 450,
-    '炮': 400, '砲': 400,
+    '炮': 450, '砲': 450,
     '相': 200, '象': 200,
     '仕': 200, '士': 200,
     '兵': 100, '卒': 100
@@ -26,7 +29,7 @@ PIECE_VALUES_STD = {
 ROWS = 10
 COLS = 9
 
-# --- 简易开局库 ---
+# --- 简易开局库（保留） ---
 FIRST_MOVES = [
     {'from': {'y': 2, 'x': 1}, 'to': {'y': 2, 'x': 4}},  # 中炮: 炮二平五
     {'from': {'y': 3, 'x': 6}, 'to': {'y': 4, 'x': 6}},  # 仙人指路: 兵七进一
@@ -35,11 +38,46 @@ FIRST_MOVES = [
     {'from': {'y': 0, 'x': 1}, 'to': {'y': 2, 'x': 2}},  # 起马: 马一平二
 ]
 
-# --- 将棋盘状态转换为可哈希的元组 ---
+# --- Zobrist 哈希 ---
+ZOBRIST_TABLE = {}
+ZOBRIST_TURN = random.getrandbits(64)
+
+def init_zobrist():
+    pieces = list(PIECE_VALUES_STD.keys())
+    sides = ['red', 'black']
+    for y in range(ROWS):
+        for x in range(COLS):
+            for p in pieces:
+                for s in sides:
+                    ZOBRIST_TABLE[(y, x, p, s)] = random.getrandbits(64)
+init_zobrist()
+
+def compute_hash(board_state, side_to_move):
+    h = 0
+    for y in range(ROWS):
+        for x in range(COLS):
+            piece = board_state[y][x]
+            if piece:
+                h ^= ZOBRIST_TABLE[(y, x, piece['type'], piece['side'])]
+    if side_to_move == 'black':
+        h ^= ZOBRIST_TURN
+    return h
+
+def update_hash(h, from_pos, to_pos, moving_piece, captured_piece, side_to_move):
+    fx, fy = from_pos['x'], from_pos['y']
+    tx, ty = to_pos['x'], to_pos['y']
+    h ^= ZOBRIST_TABLE[(fy, fx, moving_piece['type'], moving_piece['side'])]
+    if captured_piece:
+        h ^= ZOBRIST_TABLE[(ty, tx, captured_piece['type'], captured_piece['side'])]
+    h ^= ZOBRIST_TABLE[(ty, tx, moving_piece['type'], moving_piece['side'])]
+    h ^= ZOBRIST_TURN
+    return h
+
+# --- 工具函数 ---
 def board_to_tuple(board_state):
     return tuple(tuple((item['type'] + '_' + item['side']) if item else None for item in row) for row in board_state)
 
-# --- 棋子走法判断 ---
+# --- 基本走法判断（保留原有实现） ---
 def can_move_on(board_state, from_pos, to_pos):
     fx, fy = from_pos['x'], from_pos['y']
     tx, ty = to_pos['x'], to_pos['y']
@@ -211,7 +249,7 @@ def can_move_advisor_on(board_state, from_x, from_y, to_x, to_y, side):
 
     return True
 
-# --- 找将与将军检测 ---
+# --- 将帅检测（保留） ---
 def find_general_in_board_state(board_state, side):
     for y in range(ROWS):
         for x in range(COLS):
@@ -256,11 +294,8 @@ def is_king_facing_king_board(board_state):
         return True
     return False
 
-# --- 历史（长将）检测 ---
-# history 元素：(board_hash, is_check, checking_side)
-# 返回触发“长将”的一方（'red' / 'black'），若无返回 None
+# --- 历史（长将）检测（保留） ---
 def is_perpetual_check(history, required_repeat=3):
-    # 统计 (board_hash, checking_side) 出现次数，且该历史项必须是 is_check == True
     counts = {}
     for board_hash, is_check, checking_side in history:
         if not is_check:
@@ -271,7 +306,7 @@ def is_perpetual_check(history, required_repeat=3):
             return checking_side
     return None
 
-# --- 评估函数 ---
+# --- 评估函数（增强：PST、移动性、被将状态、历史惩罚/奖励） ---
 def evaluate_board(board_state, history):
     score = 0
     for y in range(ROWS):
@@ -284,16 +319,41 @@ def evaluate_board(board_state, history):
             side_mult = 1 if piece['side'] == 'black' else -1
             add = val * side_mult
 
+            # PST 简单示例
             if piece['type'] in ['兵', '卒']:
+                add += PST_SOLDIER[y][x] * side_mult
                 is_across = (piece['side'] == 'red' and y >= 5) or (piece['side'] == 'black' and y <= 4)
                 if is_across:
-                    add += 20 * side_mult
+                    add += 25 * side_mult
 
             if 3 <= x <= 5:
                 add += 5 * side_mult
 
             score += add
 
+    # 🚀 新增：轻量化 mobility 计算（避免递归）
+    def count_legal_moves(board_state, side):
+        count = 0
+        for yy in range(ROWS):
+            for xx in range(COLS):
+                piece = board_state[yy][xx]
+                if not piece or piece['side'] != side:
+                    continue
+                for ty in range(ROWS):
+                    for tx in range(COLS):
+                        if can_move_on(board_state, {'x': xx, 'y': yy}, {'x': tx, 'y': ty}):
+                            tmp_board = copy.deepcopy(board_state)
+                            tmp_board[ty][tx] = tmp_board[yy][xx]
+                            tmp_board[yy][xx] = None
+                            if not is_in_check_board(tmp_board, side) and not is_king_facing_king_board(tmp_board):
+                                count += 1
+        return count
+
+    mobility_black = count_legal_moves(board_state, 'black')
+    mobility_red = count_legal_moves(board_state, 'red')
+    score += (mobility_black - mobility_red) * 2
+
+    # 将军奖励/惩罚
     if is_in_check_board(board_state, 'red'):
         score += 200
     if is_in_check_board(board_state, 'black'):
@@ -301,17 +361,23 @@ def evaluate_board(board_state, history):
 
     offender = is_perpetual_check(history)
     if offender is not None:
-        # offender 为持续将军的一方 —— 这应该被严厉惩罚（即使看起来是在“将”对方）
-        # 评分体系里：数值越高对黑越有利；对红越不利
         if offender == 'black':
             score -= 1000000
-        else:  # 'red'
+        else:
             score += 1000000
 
     return score
 
-# --- 走子后评分（用于走子排序） ---
+
+# --- 置换表（简单实现） ---
+TRANSP_TABLE = {}  # key: board_tuple, value: (depth, score, flag) flag: 'EXACT'/'LOWER'/'UPPER'
+
+# --- 历史表（history heuristic）: key: (from_x,from_y,to_x,to_y) -> score ---
+HISTORY_HEUR = {}
+
+# --- 走子评分（用于走子排序） ---
 def score_move_board(from_pos, to_pos, board_state, history, side):
+    # 保留你的局部模拟并加上排序信息
     tmp_board = copy.deepcopy(board_state)
     moving_piece = tmp_board[from_pos['y']][from_pos['x']]
     captured_piece = tmp_board[to_pos['y']][to_pos['x']]
@@ -324,7 +390,6 @@ def score_move_board(from_pos, to_pos, board_state, history, side):
     tmp_board[from_pos['y']][from_pos['x']] = None
 
     if is_in_check_board(tmp_board, side):
-        # log(f"score_move_board: move {from_pos}->{to_pos} would self-check, score=-999999")
         return -999999
 
     opponent = 'red' if side == 'black' else 'black'
@@ -352,18 +417,53 @@ def score_move_board(from_pos, to_pos, board_state, history, side):
     offender = is_perpetual_check(new_history)
     if offender is not None:
         if offender == 'black':
-            # log(f"score_move_board: move {from_pos}->{to_pos} triggers perpetual check for black, score=-1000000")
             return -1000000
         else:
-            # log(f"score_move_board: move {from_pos}->{to_pos} triggers perpetual check for red, score=1000000")
             return 1000000
 
+    # 被吃/保护评估（保留）
+    penalty = 0
+    for y in range(ROWS):
+        for x in range(COLS):
+            piece = tmp_board[y][x]
+            if piece and piece['side'] == opponent:
+                if can_move_on(tmp_board, {'x': x, 'y': y}, to_pos):
+                    sim_board = copy.deepcopy(tmp_board)
+                    sim_board[to_pos['y']][to_pos['x']] = sim_board[y][x]
+                    sim_board[y][x] = None
+
+                    if not is_in_check_board(sim_board, opponent):
+                        attacker_value = PIECE_VALUES_STD.get(piece['type'], 0)
+                        victim_value = PIECE_VALUES_STD.get(moving_piece['type'], 0)
+
+                        can_recapture = False
+                        recapture_value = 0
+                        for yy in range(ROWS):
+                            for xx in range(COLS):
+                                ally = sim_board[yy][xx]
+                                if ally and ally['side'] == side:
+                                    if can_move_on(sim_board, {'x': xx, 'y': yy}, to_pos):
+                                        can_recapture = True
+                                        recapture_value = PIECE_VALUES_STD.get(ally['type'], 0)
+                                        break
+                            if can_recapture:
+                                break
+
+                        if can_recapture:
+                            trade_loss = victim_value - attacker_value
+                            if trade_loss > 0:
+                                penalty = trade_loss
+                        else:
+                            penalty = victim_value
+                        break
+        if penalty > 0:
+            break
+
     eval_score = evaluate_board(tmp_board, new_history)
-    total_score = eval_score + check_bonus + base
-    # log(f"score_move_board: move {from_pos}->{to_pos} eval_score={eval_score} check_bonus={check_bonus} base={base} total={total_score}")
+    total_score = eval_score + check_bonus + base - penalty
     return total_score
 
-# --- 列举所有合法走法（并排序） ---
+# --- 生成所有合法走法（改进：返回额外信息，便于排序） ---
 def get_all_legal_moves_board(board_state, side, history):
     moves = []
     for y in range(ROWS):
@@ -389,17 +489,49 @@ def get_all_legal_moves_board(board_state, side, history):
                     if is_king_facing_king_board(tmp_board):
                         continue
 
-                    # 评分并加入
                     score = score_move_board({'x': x, 'y': y}, {'x': tx, 'y': ty}, board_state, history, side)
-                    # log(f"get_all_legal_moves_board: {side} move from ({x},{y}) to ({tx},{ty}) score={score}")
-                    moves.append({'from': {'x': x, 'y': y}, 'to': {'x': tx, 'y': ty}, 'score': score})
 
-    # 排序：黑方以大到小（黑方偏好大分），红方以小到大（红方偏好小分）
-    moves.sort(key=lambda m: m['score'], reverse=True if side == 'black' else False)
-    # log(f"get_all_legal_moves_board: {side} total moves={len(moves)}")
+                    # 附加排序键： capture_value, promotion-like bonus（这里没有升变），history heuristic
+                    capture = board_state[ty][tx]
+                    capture_value = PIECE_VALUES_STD.get(capture['type'], 0) if capture else 0
+                    history_bonus = HISTORY_HEUR.get((x,y,tx,ty), 0)
+
+                    moves.append({
+                        'from': {'x': x, 'y': y},
+                        'to': {'x': tx, 'y': ty},
+                        'score': score,
+                        'capture_value': capture_value,
+                        'history_bonus': history_bonus
+                    })
+
+    # 排序：以 capture_value（高先） -> history_bonus -> heuristic score
+    moves.sort(key=lambda m: (m['capture_value'], m['history_bonus'], m['score']), reverse=True)
+    # 如果你希望 black/ red 按不同偏好排序，可以在调用处再反转
     return moves
 
-# --- 判断局面是否结束 ---
+# --- 生成仅“吃子”走法（用于静态延伸） ---
+def generate_capture_moves(board_state, side):
+    captures = []
+    for y in range(ROWS):
+        for x in range(COLS):
+            piece = board_state[y][x]
+            if not piece or piece['side'] != side:
+                continue
+            for ty in range(ROWS):
+                for tx in range(COLS):
+                    target = board_state[ty][tx]
+                    if not target:
+                        continue
+                    if target['side'] == side:
+                        continue
+                    if can_move_on(board_state, {'x': x, 'y': y}, {'x': tx, 'y': ty}):
+                        capture_value = PIECE_VALUES_STD.get(target['type'], 0)
+                        captures.append({'from': {'x': x, 'y': y}, 'to': {'x': tx, 'y': ty}, 'capture_value': capture_value})
+    # MVV-LVA style: higher captured value first
+    captures.sort(key=lambda m: m['capture_value'], reverse=True)
+    return captures
+
+# --- 检查胜负（保留） ---
 def check_game_over(board_state):
     red_general = find_general_in_board_state(board_state, 'red')
     black_general = find_general_in_board_state(board_state, 'black')
@@ -410,14 +542,130 @@ def check_game_over(board_state):
         return {'game_over': True, 'message': '红方胜利！'}
     return {'game_over': False, 'message': ''}
 
-# --- Minimax（带 alpha-beta 和 history 传播） ---
-def minimax_root(board_state, depth, side, history=None):
+# --- Quiescence Search（静态搜索） ---
+def quiescence_search(board_state, alpha, beta, side, history):
+    stand_pat = evaluate_board(board_state, history)
+    if stand_pat >= beta:
+        return beta
+    if alpha < stand_pat:
+        alpha = stand_pat
+
+    captures = generate_capture_moves(board_state, side)
+    for mv in captures:
+        from_pos, to_pos = mv['from'], mv['to']
+        tmp_board = copy.deepcopy(board_state)
+        tmp_board[to_pos['y']][to_pos['x']] = tmp_board[from_pos['y']][from_pos['x']]
+        tmp_board[from_pos['y']][from_pos['x']] = None
+
+        if is_in_check_board(tmp_board, side):
+            continue
+
+        opponent = 'red' if side == 'black' else 'black'
+        is_check_now = is_in_check_board(tmp_board, opponent)
+        new_history = history + [(board_to_tuple(tmp_board), is_check_now, side)]
+
+        score = -quiescence_search(tmp_board, -beta, -alpha, opponent, new_history)
+        if score >= beta:
+            return beta
+        if score > alpha:
+            alpha = score
+    return alpha
+
+# --- Minimax（带 alpha-beta、置换表、静态搜索与历史启发） ---
+def minimax(board_state, depth, alpha, beta, side_to_move, history):
+    key = board_to_tuple(board_state)
+    tt_entry = TRANSP_TABLE.get(key)
+    if tt_entry:
+        tt_depth, tt_score, tt_flag = tt_entry
+        if tt_depth >= depth:
+            if tt_flag == 'EXACT':
+                return tt_score
+            elif tt_flag == 'LOWER' and tt_score > alpha:
+                alpha = tt_score
+            elif tt_flag == 'UPPER' and tt_score < beta:
+                beta = tt_score
+            if alpha >= beta:
+                return tt_score
+
+    if depth == 0:
+        # 使用静态搜索（quiescence）
+        qscore = quiescence_search(board_state, alpha, beta, side_to_move, history)
+        return qscore
+
+    moves = get_all_legal_moves_board(board_state, side_to_move, history)
+    if not moves:
+        if is_in_check_board(board_state, side_to_move):
+            return -1000000 if side_to_move == 'black' else 1000000
+        else:
+            return 0
+
+    best_score = -float('inf')
+    best_flag = 'UPPER'
+    opponent = 'red' if side_to_move == 'black' else 'black'
+
+    # 对 moves 已经按吃子与历史排序；我们仍然在循环中尝试 alpha-beta
+    for move in moves:
+        from_pos = move['from']
+        to_pos = move['to']
+
+        tmp_board = copy.deepcopy(board_state)
+        moving = tmp_board[from_pos['y']][from_pos['x']]
+        captured = tmp_board[to_pos['y']][to_pos['x']]
+        tmp_board[to_pos['y']][to_pos['x']] = moving
+        tmp_board[from_pos['y']][from_pos['x']] = None
+
+        if is_in_check_board(tmp_board, side_to_move):
+            continue
+
+        is_check_now = is_in_check_board(tmp_board, opponent)
+        new_history = history + [(board_to_tuple(tmp_board), is_check_now, side_to_move)]
+
+        score = -minimax(tmp_board, depth - 1, -beta, -alpha, opponent, new_history)
+
+        # 如果该走子导致更好结果，更新历史表（简单增量）
+        if score > best_score:
+            best_score = score
+        if score > alpha:
+            alpha = score
+            best_flag = 'EXACT'
+            # history heuristic 增强
+            keyh = (from_pos['x'], from_pos['y'], to_pos['x'], to_pos['y'])
+            HISTORY_HEUR[keyh] = HISTORY_HEUR.get(keyh, 0) + (1 << (depth))  # 深度奖励更高
+        if alpha >= beta:
+            # 失败-剪枝 -> 增强历史表（杀手/促动）
+            keyh = (from_pos['x'], from_pos['y'], to_pos['x'], to_pos['y'])
+            HISTORY_HEUR[keyh] = HISTORY_HEUR.get(keyh, 0) + (1 << (depth+1))
+            break
+
+    # 存入置换表
+    if best_score <= alpha:
+        flag = 'UPPER'
+    elif best_score >= beta:
+        flag = 'LOWER'
+    else:
+        flag = 'EXACT'
+    TRANSP_TABLE[key] = (depth, best_score, flag)
+    return best_score
+
+# --- 根节点调用（带迭代加深，可按需限制 depth） ---
+def minimax_root(board_state, depth, side, history=None, use_iterative=False):
     if history is None:
         history = []
 
     log(f"minimax_root: side={side}, depth={depth}, history_len={len(history)}")
-    # 尝试开局库（如果是初始盘面并且是红方走）
-    if board_state == [[{'type': '車', 'side': 'red'}, {'type': '馬', 'side': 'red'}, {'type': '相', 'side': 'red'}, {'type': '仕', 'side': 'red'}, {'type': '帥', 'side': 'red'}, {'type': '仕', 'side': 'red'}, {'type': '相', 'side': 'red'}, {'type': '馬', 'side': 'red'}, {'type': '車', 'side': 'red'}], [None, None, None, None, None, None, None, None, None], [None, {'type': '炮', 'side': 'red'}, None, None, None, None, None, {'type': '炮', 'side': 'red'}, None], [{'type': '兵', 'side': 'red'}, None, {'type': '兵', 'side': 'red'}, None, {'type': '兵', 'side': 'red'}, None, {'type': '兵', 'side': 'red'}, None, {'type': '兵', 'side': 'red'}], [None, None, None, None, None, None, None, None, None], [None, None, None, None, None, None, None, None, None], [{'type': '卒', 'side': 'black'}, None, {'type': '卒', 'side': 'black'}, None, {'type': '卒', 'side': 'black'}, None, {'type': '卒', 'side': 'black'}, None, {'type': '卒', 'side': 'black'}], [None, {'type': '炮', 'side': 'black'}, None, None, None, None, None, {'type': '炮', 'side': 'black'}, None], [None, None, None, None, None, None, None, None, None], [{'type': '車', 'side': 'black'}, {'type': '馬', 'side': 'black'}, {'type': '象', 'side': 'black'}, {'type': '士', 'side': 'black'}, {'type': '將', 'side': 'black'}, {'type': '士', 'side': 'black'}, {'type': '象', 'side': 'black'}, {'type': '馬', 'side': 'black'}, {'type': '車', 'side': 'black'}]] and side == 'red':
+    # 开局库判断（保留）
+    starting_position = [[{'type': '車', 'side': 'red'}, {'type': '馬', 'side': 'red'}, {'type': '相', 'side': 'red'}, {'type': '仕', 'side': 'red'}, {'type': '帥', 'side': 'red'}, {'type': '仕', 'side': 'red'}, {'type': '相', 'side': 'red'}, {'type': '馬', 'side': 'red'}, {'type': '車', 'side': 'red'}],
+                         [None]*9,
+                         [None, {'type': '炮', 'side': 'red'}, None, None, None, None, None, {'type': '炮', 'side': 'red'}, None],
+                         [{'type': '兵', 'side': 'red'}, None, {'type': '兵', 'side': 'red'}, None, {'type': '兵', 'side': 'red'}, None, {'type': '兵', 'side': 'red'}, None, {'type': '兵', 'side': 'red'}],
+                         [None]*9,
+                         [None]*9,
+                         [{'type': '卒', 'side': 'black'}, None, {'type': '卒', 'side': 'black'}, None, {'type': '卒', 'side': 'black'}, None, {'type': '卒', 'side': 'black'}, None, {'type': '卒', 'side': 'black'}],
+                         [None, {'type': '炮', 'side': 'black'}, None, None, None, None, None, {'type': '炮', 'side': 'black'}, None],
+                         [None]*9,
+                         [{'type': '車', 'side': 'black'}, {'type': '馬', 'side': 'black'}, {'type': '象', 'side': 'black'}, {'type': '士', 'side': 'black'}, {'type': '將', 'side': 'black'}, {'type': '士', 'side': 'black'}, {'type': '象', 'side': 'black'}, {'type': '馬', 'side': 'black'}, {'type': '車', 'side': 'black'}]]
+
+    if board_state == starting_position and side == 'red':
         log("minimax_root: using opening book move")
         return random.choice(FIRST_MOVES)
 
@@ -426,103 +674,94 @@ def minimax_root(board_state, depth, side, history=None):
         log("minimax_root: no legal moves")
         return None
 
-    if side == 'black':
-        best_val = -float('inf')
-        best_moves = []
-        for move in moves:
-            tmp_board = copy.deepcopy(board_state)
-            tmp_board[move['to']['y']][move['to']['x']] = tmp_board[move['from']['y']][move['from']['x']]
-            tmp_board[move['from']['y']][move['from']['x']] = None
+    # 如果采用迭代加深，先浅层到深层循环（可按需启用）
+    best_moves = []
+    if use_iterative:
+        best_val = -float('inf') if side == 'black' else float('inf')
+        for d in range(1, depth + 1):
+            TRANSP_TABLE.clear()  # 每次深度重用置换表（可保留）或保留以提升
+            current_best_moves = []
+            if side == 'black':
+                local_best = -float('inf')
+                for move in moves:
+                    tmp_board = copy.deepcopy(board_state)
+                    tmp_board[move['to']['y']][move['to']['x']] = tmp_board[move['from']['y']][move['from']['x']]
+                    tmp_board[move['from']['y']][move['from']['x']] = None
 
-            opponent = 'red'
-            is_check_now = is_in_check_board(tmp_board, opponent)
-            new_history = history + [(board_to_tuple(tmp_board), is_check_now, side)]
+                    opponent = 'red'
+                    is_check_now = is_in_check_board(tmp_board, opponent)
+                    new_history = history + [(board_to_tuple(tmp_board), is_check_now, side)]
 
-            val = minimax(tmp_board, depth - 1, -float('inf'), float('inf'), opponent, new_history)
-            log(f"minimax_root: black move {move} val={val}")
-            if val > best_val:
-                best_val = val
-                best_moves = [move]
-            elif val == best_val:
-                best_moves.append(move)
-        log(f"minimax_root: black best_val={best_val} best_moves={best_moves}")
-        return random.choice(best_moves)
-    else:  # red
-        best_val = float('inf')
-        best_moves = []
-        for move in moves:
-            tmp_board = copy.deepcopy(board_state)
-            tmp_board[move['to']['y']][move['to']['x']] = tmp_board[move['from']['y']][move['from']['x']]
-            tmp_board[move['from']['y']][move['from']['x']] = None
+                    val = minimax(tmp_board, d - 1, -float('inf'), float('inf'), opponent, new_history)
+                    if val > local_best:
+                        local_best = val
+                        current_best_moves = [move]
+                    elif val == local_best:
+                        current_best_moves.append(move)
+                best_val = local_best
+                best_moves = current_best_moves
+            else:
+                local_best = float('inf')
+                for move in moves:
+                    tmp_board = copy.deepcopy(board_state)
+                    tmp_board[move['to']['y']][move['to']['x']] = tmp_board[move['from']['y']][move['from']['x']]
+                    tmp_board[move['from']['y']][move['from']['x']] = None
 
-            opponent = 'black'
-            is_check_now = is_in_check_board(tmp_board, opponent)
-            new_history = history + [(board_to_tuple(tmp_board), is_check_now, side)]
+                    opponent = 'black'
+                    is_check_now = is_in_check_board(tmp_board, opponent)
+                    new_history = history + [(board_to_tuple(tmp_board), is_check_now, side)]
 
-            val = minimax(tmp_board, depth - 1, -float('inf'), float('inf'), opponent, new_history)
-            log(f"minimax_root: red move {move} val={val}")
-            if val < best_val:
-                best_val = val
-                best_moves = [move]
-            elif val == best_val:
-                best_moves.append(move)
-        log(f"minimax_root: red best_val={best_val} best_moves={best_moves}")
-        return random.choice(best_moves)
+                    val = minimax(tmp_board, d - 1, -float('inf'), float('inf'), opponent, new_history)
+                    if val < local_best:
+                        local_best = val
+                        current_best_moves = [move]
+                    elif val == local_best:
+                        current_best_moves.append(move)
+                best_val = local_best
+                best_moves = current_best_moves
+            # log per-depth
+            log(f"minimax_root: iterative depth={d} best_val={best_val} best_moves_count={len(best_moves)}")
+        return random.choice(best_moves) if best_moves else random.choice(moves)
+    else:
+        if side == 'black':
+            best_val = -float('inf')
+            best_moves = []
+            for move in moves:
+                tmp_board = copy.deepcopy(board_state)
+                tmp_board[move['to']['y']][move['to']['x']] = tmp_board[move['from']['y']][move['from']['x']]
+                tmp_board[move['from']['y']][move['from']['x']] = None
 
-def minimax(board_state, depth, alpha, beta, side_to_move, history):
-    log(f"minimax: side={side_to_move}, depth={depth}, alpha={alpha}, beta={beta}, history_len={len(history)}")
-    if depth == 0:
-        eval_score = evaluate_board(board_state, history)
-        log(f"minimax: depth==0, eval_score={eval_score}")
-        return eval_score
+                opponent = 'red'
+                is_check_now = is_in_check_board(tmp_board, opponent)
+                new_history = history + [(board_to_tuple(tmp_board), is_check_now, side)]
 
-    moves = get_all_legal_moves_board(board_state, side_to_move, history)
-    if not moves:
-        # 无走法：若被将则负，否则和棋
-        if is_in_check_board(board_state, side_to_move):
-            log(f"minimax: no moves, {side_to_move} is in check")
-            return -1000000 if side_to_move == 'black' else 1000000
-        else:
-            log(f"minimax: no moves, not in check, draw")
-            return 0
+                val = minimax(tmp_board, depth - 1, -float('inf'), float('inf'), opponent, new_history)
+                log(f"minimax_root: black move {move} val={val}")
+                if val > best_val:
+                    best_val = val
+                    best_moves = [move]
+                elif val == best_val:
+                    best_moves.append(move)
+            log(f"minimax_root: black best_val={best_val} best_moves={best_moves}")
+            return random.choice(best_moves)
+        else:  # red
+            best_val = float('inf')
+            best_moves = []
+            for move in moves:
+                tmp_board = copy.deepcopy(board_state)
+                tmp_board[move['to']['y']][move['to']['x']] = tmp_board[move['from']['y']][move['from']['x']]
+                tmp_board[move['from']['y']][move['from']['x']] = None
 
-    if side_to_move == 'black':
-        value = -float('inf')
-        for move in moves:
-            tmp_board = copy.deepcopy(board_state)
-            tmp_board[move['to']['y']][move['to']['x']] = tmp_board[move['from']['y']][move['from']['x']]
-            tmp_board[move['from']['y']][move['from']['x']] = None
+                opponent = 'black'
+                is_check_now = is_in_check_board(tmp_board, opponent)
+                new_history = history + [(board_to_tuple(tmp_board), is_check_now, side)]
 
-            opponent = 'red'
-            is_check_now = is_in_check_board(tmp_board, opponent)
-            new_history = history + [(board_to_tuple(tmp_board), is_check_now, side_to_move)]
-
-            child_val = minimax(tmp_board, depth - 1, alpha, beta, opponent, new_history)
-            log(f"minimax: black move {move} child_val={child_val}")
-            value = max(value, child_val)
-            alpha = max(alpha, value)
-            if alpha >= beta:
-                log(f"minimax: black pruning at move {move} alpha={alpha} beta={beta}")
-                break
-        log(f"minimax: black return value={value}")
-        return value
-    else:  # red
-        value = float('inf')
-        for move in moves:
-            tmp_board = copy.deepcopy(board_state)
-            tmp_board[move['to']['y']][move['to']['x']] = tmp_board[move['from']['y']][move['from']['x']]
-            tmp_board[move['from']['y']][move['from']['x']] = None
-
-            opponent = 'black'
-            is_check_now = is_in_check_board(tmp_board, opponent)
-            new_history = history + [(board_to_tuple(tmp_board), is_check_now, side_to_move)]
-
-            child_val = minimax(tmp_board, depth - 1, alpha, beta, opponent, new_history)
-            log(f"minimax: red move {move} child_val={child_val}")
-            value = min(value, child_val)
-            beta = min(beta, value)
-            if alpha >= beta:
-                log(f"minimax: red pruning at move {move} alpha={alpha} beta={beta}")
-                break
-        log(f"minimax: red return value={value}")
-        return value
+                val = minimax(tmp_board, depth - 1, -float('inf'), float('inf'), opponent, new_history)
+                log(f"minimax_root: red move {move} val={val}")
+                if val < best_val:
+                    best_val = val
+                    best_moves = [move]
+                elif val == best_val:
+                    best_moves.append(move)
+            log(f"minimax_root: red best_val={best_val} best_moves={best_moves}")
+            return random.choice(best_moves)

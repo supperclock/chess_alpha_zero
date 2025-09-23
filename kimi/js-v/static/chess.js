@@ -4,6 +4,19 @@ let board = Array.from({length:ROWS},()=>Array(COLS).fill(null)); // 二维数�
 let currentSide = 'red';      // 红先
 let selected  = null;         // 当前被选中的棋子 DOM
 let gameOver = false; // 新增：游戏结束标志
+let boardScale = 1.5;           // 棋盘缩放比例（固定）
+
+function applyFixedScale(){
+  const wrap = document.getElementById('chessboard-wrapper');
+  const cb = document.getElementById('chessboard');
+  if (!wrap || !cb) return;
+  wrap.style.transformOrigin = 'top left';
+  wrap.style.margin = '0';
+  wrap.style.left = '50%';
+  wrap.style.transform = 'translateX(-50%)';
+  cb.style.transformOrigin = 'top left';
+  cb.style.transform = 'scale(1.5)';
+}
 
 /* 初始排布（同你原来写的） */
 const initialPieces = {
@@ -60,12 +73,19 @@ function initBoard(){
       if(gameOver) return; // 游戏结束禁止操作
       if(!selected || currentSide !== 'red') return;
       const rect = box.getBoundingClientRect();
-      const x = Math.round((e.clientX - rect.left - 25)/50);
-      const y = Math.round((e.clientY - rect.top  - 25)/50);
+    const dx = (e.clientX - rect.left) / boardScale;
+    const dy = (e.clientY - rect.top)  / boardScale;
+    const x = Math.round((dx - 25) / 50);
+    const y = Math.round((dy - 25) / 50);
       tryMove(selected, x, y);
     });
   }
 window.addEventListener('DOMContentLoaded', initBoard);
+// DOM 就绪后绑定缩放选择器
+window.addEventListener('DOMContentLoaded', ()=>{
+  applyFixedScale();
+  window.addEventListener('resize', applyFixedScale);
+});
   
 /* ========== 工具函数 ========== */
 function xy(el){                 // 从绝对像素反推格点
@@ -82,6 +102,18 @@ function tryMove(pieceEl, toX, toY){
   const from = {...xy(pieceEl), piece:pieceEl};
   const target = board[toY][toX];
   if(!canMove(from, {x:toX,y:toY}, target)) return; // 不合规则
+
+  /* 新增：在原位置放置提示点（保留到下一步走子时才清除） */
+  (function placeFromHint(){
+    // 清除上一手的提示点
+    document.querySelectorAll('.from-move-hint').forEach(el=> el.remove());
+    const hint = document.createElement('div');
+    hint.className = 'from-move-hint';
+    hint.style.left = (25 + from.x * 50) + 'px';
+    hint.style.top  = (25 + from.y * 50) + 'px';
+    const boardEl = document.getElementById('chessboard');
+    boardEl.appendChild(hint);
+  })();
 
   /* 吃子 */
   if(target) {

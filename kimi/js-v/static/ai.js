@@ -9,12 +9,29 @@ const PIECE_VALUES_STD = {
   '仕': 200, '士':200,
   '兵': 100, '卒':100
 };
-// 在 aiMoveBlack 中使用 minimax（以 black 为电脑）
-// depth: 搜索深度（2 或 3）
+// 置换表（简单键）用于缓存局面评估，加速搜索
+const TT = new Map();
+
+function hashBoardState(boardState) {
+  let s = '';
+  for (let y=0; y<ROWS; y++) {
+    for (let x=0; x<COLS; x++) {
+      const p = boardState[y][x];
+      if (!p) { s += '.'; continue; }
+      // 字符 + 方
+      s += p.type + (p.side === 'black' ? 'b' : 'r');
+    }
+    s += '/';
+  }
+  return s;
+}
+
+// 在 aiMoveBlack 中使用改进的搜索（以 black 为电脑）
 function aiMoveBlack() {
   if(gameOver) return; // 游戏结束禁止AI走棋
   const boardState = cloneBoardToState(board);
-  const depth = 2; // 可调：2 快，3 更强但慢
+  const depth = 2; // 默认更深一层
+  TT.clear();
   const best = minimaxRoot(boardState, depth, 'black');
   if (!best) return;
   // 把找到的最好走法映射到 DOM：找到对应的 piece DOM（用 board[][] 当前坐标）
@@ -43,7 +60,19 @@ function minimaxRoot(boardState, depth, side) {
 
 // minimax 返回 boardState 的评估分（以黑为正）
 function minimax(boardState, depth, alpha, beta, sideToMove) {
-  if (depth === 0) return evaluateBoard(boardState);
+  // 置换表命中
+  const ttKey = hashBoardState(boardState) + '|' + depth + '|' + sideToMove;
+  const ttEntry = TT.get(ttKey);
+  if (ttEntry && ttEntry.depth >= depth) {
+    return ttEntry.value;
+  }
+
+  if (depth === 0) {
+    const q = quiescence(boardState, alpha, beta, sideToMove);
+    // 存表
+    TT.set(ttKey, { depth, value: q });
+    return q;
+  }
 
   const moves = getAllLegalMoves_board(boardState, sideToMove);
   if (moves.length === 0) {
@@ -65,6 +94,7 @@ function minimax(boardState, depth, alpha, beta, sideToMove) {
       alpha = Math.max(alpha, value);
       if (alpha >= beta) break; // 剪枝
     }
+    TT.set(ttKey, { depth, value });
     return value;
   } else {
     let value = Infinity;
@@ -76,6 +106,7 @@ function minimax(boardState, depth, alpha, beta, sideToMove) {
       beta = Math.min(beta, value);
       if (alpha >= beta) break;
     }
+    TT.set(ttKey, { depth, value });
     return value;
   }
 }
@@ -246,6 +277,11 @@ function evaluateBoard(boardState) {
       // 中路优先（简单位置分）
       if (x >= 3 && x <= 5) add += 5 * sideMult;
 
+      // 前进倾向：黑子更靠前（y 大）略加分，红子更靠前（y 小）略加分
+      if (p.type === '兵' || p.type === '卒') {
+        add += (p.side === 'black' ? (9 - y) : y) * 0.5 * sideMult;
+      }
+
       score += add;
     }
   }
@@ -280,20 +316,20 @@ function scoreMove_board(from, to, boardState) {
   let checkBonus = 0;
   if (_isInCheck_board(tmp, opponent)) checkBonus = 150;
 
-// 额外：若走后对方将/帅被吃掉，极大奖励
+  // 额外：若走后对方将/帅不存在（被吃掉），极大奖励
   const opponentGeneral = (opponent === 'black') ? '將' : '帥';
-  let generalCaptured = false;
+  let opponentGeneralExists = false;
   for (let y=0; y<ROWS; y++){
     for (let x=0; x<COLS; x++){
       const p = tmp[y][x];
       if (p && p.type === opponentGeneral && p.side === opponent) {
-        generalCaptured = true;
+        opponentGeneralExists = true;
         break;
       }
     }
-    if (generalCaptured) break;
+    if (opponentGeneralExists) break;
   }
-  if (generalCaptured) checkBonus += 10000;
+  if (!opponentGeneralExists) checkBonus += 10000;
 
   // 返回评估：以黑方视角为正（所以要 evaluateBoard(tmp)）
   return evaluateBoard(tmp) + checkBonus + base;
@@ -369,6 +405,68 @@ function getAllLegalMoves_board(boardState, side) {
   // 按 score 降序（对 black 来说大分好）
   moves.sort((a,b)=>b.score - a.score);
   return moves;
+}
+
+// 生成仅吃子或将军的“安静搜索”走法，用于叶节点延伸
+function getNoisyMoves_board(boardState, side) {
+  const moves = [];
+  for (let y=0; y<ROWS; y++){
+    for (let x=0; x<COLS; x++){
+      const p = boardState[y][x];
+      if (!p || p.side !== side) continue;
+      for (let ty=0; ty<ROWS; ty++){
+        for (let tx=0; tx<COLS; tx++){
+          if (!canMoveOn(boardState, {x,y}, {x:tx,y:ty})) continue;
+          const captured = boardState[ty][tx];
+          const tmp = boardState.map(r => r.slice());
+          tmp[ty][tx] = tmp[y][x];
+          tmp[y][x] = null;
+          if (_isInCheck_board(tmp, side)) continue;
+          if (_isKingFacingKing_board(tmp)) continue;
+          const opp = side === 'black' ? 'red' : 'black';
+          const givesCheck = _isInCheck_board(tmp, opp);
+          if (captured || givesCheck) {
+            const sc = scoreMove_board({x,y}, {x:tx,y:ty}, boardState);
+            moves.push({ from:{x,y}, to:{x:tx,y:ty}, score: sc });
+          }
+        }
+      }
+    }
+  }
+  moves.sort((a,b)=>b.score - a.score);
+  return moves;
+}
+
+// 安静搜索：在叶节点仅扩展吃子/将军，减少地平线效应
+function quiescence(boardState, alpha, beta, sideToMove) {
+  const standPat = evaluateBoard(boardState);
+  if (sideToMove === 'black') {
+    if (standPat >= beta) return beta;
+    if (standPat > alpha) alpha = standPat;
+    const moves = getNoisyMoves_board(boardState, 'black');
+    for (const m of moves) {
+      const tmp = boardState.map(r => r.slice());
+      tmp[m.to.y][m.to.x] = tmp[m.from.y][m.from.x];
+      tmp[m.from.y][m.from.x] = null;
+      const score = quiescence(tmp, alpha, beta, 'red');
+      if (score > alpha) alpha = score;
+      if (alpha >= beta) break;
+    }
+    return alpha;
+  } else {
+    if (standPat <= alpha) return alpha;
+    if (standPat < beta) beta = standPat;
+    const moves = getNoisyMoves_board(boardState, 'red');
+    for (const m of moves) {
+      const tmp = boardState.map(r => r.slice());
+      tmp[m.to.y][m.to.x] = tmp[m.from.y][m.from.x];
+      tmp[m.from.y][m.from.x] = null;
+      const score = quiescence(tmp, alpha, beta, 'black');
+      if (score < beta) beta = score;
+      if (alpha >= beta) break;
+    }
+    return beta;
+  }
 }
 
 // 将当前 DOM board（board[][] 存 DOM 或 null）转换成轻量 boardState（纯数据）

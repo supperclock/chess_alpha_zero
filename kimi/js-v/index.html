@@ -78,6 +78,8 @@
         }
 
         .main-layout {
+            width: 100%;
+            /* height: 90%; */
             display: flex;
             flex-direction: row;
             gap: 32px;
@@ -94,6 +96,8 @@
             padding: 20px;
             border-radius: 0;
             box-shadow: none;
+            width: 80%;
+            /* height: 80%; */
         }
 
         /* 背景切换工具条 */
@@ -135,10 +139,10 @@
         /* 外层包裹用于缩放占位，内部真实棋盘固定原始尺寸 */
         .chessboard-wrapper {
             width: 450px;
-            height: 500px;
+            /* height: 490px; */
             margin: 0 auto;
             position: relative;
-            left: 50%;
+            left: 10%;
             transform: none;
         }
         .chessboard {
@@ -373,7 +377,7 @@
     </style>
 </head>
 <body>
-    <div class="bg-toolbar">
+    <!-- <div class="bg-toolbar">
             <span>主题</span>
             <select id="bg-select">
                 <option value="guochao">国潮</option>
@@ -382,10 +386,10 @@
             </select>
             <button id="bg-upload-btn">上传图片</button>
             <input type="file" id="bg-file" accept="image/*">
-        </div>
+        </div> -->
     <div class="main-layout">
         <div class="chess-container">
-            <div class="board-title">中国象棋</div>
+            <!-- <div class="board-title">中国象棋</div> -->
             <div class="chessboard-wrapper" id="chessboard-wrapper">
                 <div class="chessboard" id="chessboard">
                 <!-- 棋盘网格 -->

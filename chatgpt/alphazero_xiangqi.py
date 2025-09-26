@@ -1,21 +1,7 @@
 
 """
-AlphaZero-like minimal implementation for Xiangqi (Chinese Chess)
+AlphaZero implementation for Xiangqi (Chinese Chess)
 
-Single-file runnable demo. Not production-grade, but complete and end-to-end:
-- Xiangqi game logic (move generation, basic rules, terminal detection)
-- Small PyTorch residual network (policy + value head)
-- MCTS using neural network priors (PUCT)
-- Self-play data collection & single mini-training loop example
-
-Usage:
-    python alphazero_xiangqi.py --demo
-
-Notes:
-- This is a compact educational implementation. For large-scale training you should:
-  - Use efficient vectorized data pipelines, GPUs, mixed precision
-  - Implement full move legality checks including check/checkmate detection robustly
-  - Add model checkpointing, evaluation, hyperparameter tuning
 """
 
 import argparse
@@ -498,22 +484,6 @@ class MCTS:
 # ----------------------------- Replay Buffer & Self-play -----------------------------
 Transition = namedtuple('Transition', ['state','pi','value'])
 
-class ReplayBuffer:
-    def __init__(self, capacity=10000):
-        self.buf = deque(maxlen=capacity)
-    def push(self, traj):
-        # traj is list of Transition
-        self.buf.extend(traj)
-    def sample(self, batch_size):
-        idx = np.random.choice(len(self.buf), batch_size, replace=False)
-        batch = [self.buf[i] for i in idx]
-        states = np.stack([b.state for b in batch])
-        pis = np.stack([b.pi for b in batch])
-        values = np.array([b.value for b in batch], dtype=np.float32)
-        return states, pis, values
-    def __len__(self):
-        return len(self.buf)
-
 def self_play_game(mcts, max_moves=200, temp=1.0):
     board = initial_board()
     side = 'red'
@@ -584,49 +554,6 @@ def train_step(net, optimizer, batch, device=None):
     optimizer.step()
     return float(loss.detach().cpu().numpy()), float(policy_loss.detach().cpu().numpy()), float(value_loss.detach().cpu().numpy())
 
-# ----------------------------- Demo / Main -----------------------------
-def demo_selfplay_and_train(device='cuda'):
-    print("Demo: building network and running a tiny self-play + train cycle...")
-    if not TORCH_AVAILABLE:
-        print("PyTorch not found. Running a purely random-play demo of Xiangqi move generation.")
-        board = initial_board(); print_board(board)
-        moves = generate_legal_moves(board, 'red')
-        print("Legal moves for red at start:", len(moves))
-        return
-
-    net = AlphaNet()
-    net.to(device)
-    # Attempt to load existing model weights if available
-    default_model_path = 'alphazero_xiangqi.pt'
-    model_path = os.environ.get('ALPHAXIANGQI_MODEL_PATH', default_model_path)
-    if os.path.exists(model_path):
-        try:
-            state = torch.load(model_path, map_location=device)
-            net.load_state_dict(state)
-            print(f"Loaded model parameters from '{model_path}'.")
-        except Exception as e:
-            print(f"Warning: Failed to load model from '{model_path}': {e}")
-    mcts = MCTS(net=net, sims=20, c_puct=1.0, device=device)
-    buffer = ReplayBuffer(capacity=1000)
-    # generate 2 self-play games
-    for i in range(2):
-        traj, outcome = self_play_game(mcts, max_moves=200, temp=1.0)
-        buffer.push(traj)
-        print(f"Self-play game {i} produced {len(traj)} positions, outcome {outcome}")
-    # train for a handful of steps
-    optimizer = torch.optim.Adam(net.parameters(), lr=1e-3)
-    if len(buffer) >= 4:
-        for step in range(10):
-            states, pis, vals = buffer.sample(min(4, len(buffer)))
-            loss, pl, vl = train_step(net, optimizer, (states, pis, vals))
-            print(f"Train step {step}: loss={loss:.4f}, policy_loss={pl:.4f}, value_loss={vl:.4f}")
-    # Save model parameters for future runs
-    try:
-        torch.save(net.state_dict(), model_path)
-        print(f"Saved model parameters to '{model_path}'.")
-    except Exception as e:
-        print(f"Warning: Failed to save model to '{model_path}': {e}")
-    print("Demo complete.")
 
 # ----------------------------- Data I/O (JSONL) -----------------------------
 def write_transitions_jsonl(transitions, file_path):
@@ -725,10 +652,7 @@ def train_from_file(data_path, model_path=None, device='cuda', epochs=1, batch_s
         print(f"Warning: Failed to save model to '{model_path}': {e}")
 
 def main():
-    parser = argparse.ArgumentParser()
-    # Demo (legacy)
-    parser.add_argument('--demo', action='store_true', help='Run a short demo')
-    parser.add_argument('--model_path', type=str, default=None, help='Path to save/load model parameters (.pt). Overrides ALPHAXIANGQI_MODEL_PATH')
+    parser = argparse.ArgumentParser()   
     # Mode 1: generate data
     parser.add_argument('--generate_data', action='store_true', help='Generate self-play data and save to a JSONL text file')
     parser.add_argument('--output', type=str, default='selfplay.jsonl', help='Output JSONL file for generated data')
@@ -747,12 +671,6 @@ def main():
 
     # Device selection
     device = args.device
-
-    if args.demo:
-        if args.model_path:
-            os.environ['ALPHAXIANGQI_MODEL_PATH'] = args.model_path
-        demo_selfplay_and_train(device=device)
-        return
 
     if args.generate_data:
         generate_selfplay_data(

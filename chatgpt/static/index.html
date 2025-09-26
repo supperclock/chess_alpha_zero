@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>象棋 AlphaZero - 前后端模式</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script defer src="/static/main.js"></script>
+  <style>
+    /* fallback minimal styles if CSS not loaded */
+    body { font-family: Arial, sans-serif; margin: 0; }
+  </style>
+</head>
+<body>
+  <header class="toolbar">
+    <div>
+      <label>人类方: 
+        <select id="humanSide">
+          <option value="red">红</option>
+          <option value="black">黑</option>
+        </select>
+      </label>
+      <button id="newGameBtn">新开局</button>
+    </div>
+    <div>
+      <label>模拟次数: <input type="number" id="sims" value="100" min="10" step="10" /></label>
+      <label>设备: 
+        <select id="device">
+          <option value="cpu">CPU</option>
+          <option value="cuda">CUDA</option>
+        </select>
+      </label>
+      <label>模型路径: <input id="modelPath" size="28" placeholder="alphazero_xiangqi.pt" /></label>
+      <button id="applySettings">应用设置</button>
+    </div>
+  </header>
+
+  <main class="main">
+    <canvas id="board" width="540" height="600"></canvas>
+    <div class="status">
+      <div id="statusText">Ready</div>
+      <pre id="debug" style="white-space: pre-wrap"></pre>
+    </div>
+  </main>
+</body>
+</html>
+
+

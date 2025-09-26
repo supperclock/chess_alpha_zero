@@ -1,0 +1,47 @@
+:root {
+  --bg: #f6f3ea;
+  --grid: #333333;
+  --river-text: #333333;
+  --piece-red: #c00000;
+  --piece-black: #000000;
+}
+
+body {
+  background: var(--bg);
+}
+
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: #fff;
+  border-bottom: 1px solid #ddd;
+}
+
+.main {
+  display: grid;
+  grid-template-columns: auto 320px;
+  gap: 16px;
+  padding: 16px;
+}
+
+#board {
+  background: #f2e6c9;
+  width: 100%;
+  height: auto;
+  max-width: 720px;
+  border: none;
+}
+
+.status {
+  padding: 8px;
+  background: #fff;
+  border: 1px solid #eee;
+}
+
+#statusText {
+  margin-bottom: 8px;
+}
+
+

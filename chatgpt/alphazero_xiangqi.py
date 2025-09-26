@@ -19,9 +19,11 @@ Notes:
 """
 
 import argparse
+import os
 import random
 import math
 import time
+import json
 from collections import defaultdict, deque, namedtuple
 import numpy as np
 
@@ -297,48 +299,48 @@ def board_to_tensor(board, side_to_move):
     planes[14,:,:] = 1.0 if side_to_move=='red' else 0.0
     return planes
 
-if TORCH_AVAILABLE:
-    class ResidualBlock(nn.Module):
-        def __init__(self, channels):
-            super().__init__()
-            self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
-            self.bn1 = nn.BatchNorm2d(channels)
-            self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
-            self.bn2 = nn.BatchNorm2d(channels)
-        def forward(self,x):
-            out = F.relu(self.bn1(self.conv1(x)))
-            out = self.bn2(self.conv2(out))
-            return F.relu(out + x)
 
-    class AlphaNet(nn.Module):
-        def __init__(self, in_channels=15, channels=64, n_resblocks=3):
-            super().__init__()
-            self.conv = nn.Conv2d(in_channels, channels, kernel_size=3, padding=1)
-            self.bn = nn.BatchNorm2d(channels)
-            self.resblocks = nn.ModuleList([ResidualBlock(channels) for _ in range(n_resblocks)])
-            # policy head: we will produce policy over move logits by encoding moves as (from_r, from_c, to_r, to_c) -> 10*9*10*9 ~ 8100
-            self.policy_conv = nn.Conv2d(channels, 32, kernel_size=1)
-            self.policy_bn = nn.BatchNorm2d(32)
-            self.policy_fc = nn.Linear(32*10*9, 9*10*9*10)  # big but manageable for demo
-            # value head
-            self.value_conv = nn.Conv2d(channels, 8, kernel_size=1)
-            self.value_bn = nn.BatchNorm2d(8)
-            self.value_fc1 = nn.Linear(8*10*9, 64)
-            self.value_fc2 = nn.Linear(64,1)
+class ResidualBlock(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(channels)
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(channels)
+    def forward(self,x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        return F.relu(out + x)
 
-        def forward(self, x):
-            # x: (B,14,10,9)
-            out = F.relu(self.bn(self.conv(x)))
-            for r in self.resblocks:
-                out = r(out)
-            p = F.relu(self.policy_bn(self.policy_conv(out)))
-            p = p.view(p.size(0), -1)
-            p = self.policy_fc(p)  # (B, action_space)
-            v = F.relu(self.value_bn(self.value_conv(out)))
-            v = v.view(v.size(0), -1)
-            v = F.relu(self.value_fc1(v))
-            v = torch.tanh(self.value_fc2(v)).view(-1)
-            return p, v
+class AlphaNet(nn.Module):
+    def __init__(self, in_channels=15, channels=64, n_resblocks=3):
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels, channels, kernel_size=3, padding=1)
+        self.bn = nn.BatchNorm2d(channels)
+        self.resblocks = nn.ModuleList([ResidualBlock(channels) for _ in range(n_resblocks)])
+        # policy head: we will produce policy over move logits by encoding moves as (from_r, from_c, to_r, to_c) -> 10*9*10*9 ~ 8100
+        self.policy_conv = nn.Conv2d(channels, 32, kernel_size=1)
+        self.policy_bn = nn.BatchNorm2d(32)
+        self.policy_fc = nn.Linear(32*10*9, 9*10*9*10)  # big but manageable for demo
+        # value head
+        self.value_conv = nn.Conv2d(channels, 8, kernel_size=1)
+        self.value_bn = nn.BatchNorm2d(8)
+        self.value_fc1 = nn.Linear(8*10*9, 64)
+        self.value_fc2 = nn.Linear(64,1)
+
+    def forward(self, x):
+        # x: (B,14,10,9)
+        out = F.relu(self.bn(self.conv(x)))
+        for r in self.resblocks:
+            out = r(out)
+        p = F.relu(self.policy_bn(self.policy_conv(out)))
+        p = p.view(p.size(0), -1)
+        p = self.policy_fc(p)  # (B, action_space)
+        v = F.relu(self.value_bn(self.value_conv(out)))
+        v = v.view(v.size(0), -1)
+        v = F.relu(self.value_fc1(v))
+        v = torch.tanh(self.value_fc2(v)).view(-1)
+        return p, v
 
 # ----------------------------- MCTS -----------------------------
 # We'll implement a simple PUCT MCTS that queries the neural net for prior probabilities and values.
@@ -520,12 +522,15 @@ def self_play_game(mcts, max_moves=200, temp=1.0):
     return filled, terminal_outcome
 
 # ----------------------------- Training -----------------------------
-def train_step(net, optimizer, batch):
+def train_step(net, optimizer, batch, device=None):
     net.train()
     states, pis, values = batch
-    states_t = torch.tensor(states, dtype=torch.float32)
-    pis_t = torch.tensor(pis, dtype=torch.float32)
-    vals_t = torch.tensor(values, dtype=torch.float32)
+    # Ensure tensors are created on the same device as the model to avoid CPU/GPU dtype mismatch
+    if device is None:
+        device = next(net.parameters()).device
+    states_t = torch.tensor(states, dtype=torch.float32, device=device)
+    pis_t = torch.tensor(pis, dtype=torch.float32, device=device)
+    vals_t = torch.tensor(values, dtype=torch.float32, device=device)
     logits, pred_vals = net(states_t)
     # policy loss (cross-entropy with pi distribution treated as soft targets -> use KL or cross-entropy)
     # We'll use mean squared between logits softmax and target pi (simple)
@@ -539,7 +544,7 @@ def train_step(net, optimizer, batch):
     return float(loss.detach().cpu().numpy()), float(policy_loss.detach().cpu().numpy()), float(value_loss.detach().cpu().numpy())
 
 # ----------------------------- Demo / Main -----------------------------
-def demo_selfplay_and_train(device='cpu'):
+def demo_selfplay_and_train(device='cuda'):
     print("Demo: building network and running a tiny self-play + train cycle...")
     if not TORCH_AVAILABLE:
         print("PyTorch not found. Running a purely random-play demo of Xiangqi move generation.")
@@ -550,6 +555,16 @@ def demo_selfplay_and_train(device='cpu'):
 
     net = AlphaNet()
     net.to(device)
+    # Attempt to load existing model weights if available
+    default_model_path = 'alphazero_xiangqi.pt'
+    model_path = os.environ.get('ALPHAXIANGQI_MODEL_PATH', default_model_path)
+    if os.path.exists(model_path):
+        try:
+            state = torch.load(model_path, map_location=device)
+            net.load_state_dict(state)
+            print(f"Loaded model parameters from '{model_path}'.")
+        except Exception as e:
+            print(f"Warning: Failed to load model from '{model_path}': {e}")
     mcts = MCTS(net=net, sims=20, c_puct=1.0, device=device)
     buffer = ReplayBuffer(capacity=1000)
     # generate 2 self-play games
@@ -564,16 +579,167 @@ def demo_selfplay_and_train(device='cpu'):
             states, pis, vals = buffer.sample(min(4, len(buffer)))
             loss, pl, vl = train_step(net, optimizer, (states, pis, vals))
             print(f"Train step {step}: loss={loss:.4f}, policy_loss={pl:.4f}, value_loss={vl:.4f}")
-    print("Demo complete. Save model if desired.")
+    # Save model parameters for future runs
+    try:
+        torch.save(net.state_dict(), model_path)
+        print(f"Saved model parameters to '{model_path}'.")
+    except Exception as e:
+        print(f"Warning: Failed to save model to '{model_path}': {e}")
+    print("Demo complete.")
+
+# ----------------------------- Data I/O (JSONL) -----------------------------
+def write_transitions_jsonl(transitions, file_path):
+    # Each line: {"state": [...], "pi": [...], "value": float}
+    with open(file_path, 'a', encoding='utf-8') as f:
+        for t in transitions:
+            rec = {
+                'state': t.state.tolist(),
+                'pi': t.pi.tolist(),
+                'value': float(t.value),
+            }
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+def read_transitions_jsonl(file_path):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            if not line.strip():
+                continue
+            rec = json.loads(line)
+            state = np.array(rec['state'], dtype=np.float32)
+            pi = np.array(rec['pi'], dtype=np.float32)
+            value = float(rec['value'])
+            yield Transition(state, pi, value)
+
+# ----------------------------- Mode 1: Generate Self-play Data -----------------------------
+def generate_selfplay_data(output_path, num_games=10, sims=20, temp=1.0, device='cuda'):
+    if not TORCH_AVAILABLE:
+        print("Warning: PyTorch not available. Generation will use uniform priors (no NN).")
+    net = AlphaNet().to(device) if TORCH_AVAILABLE else None
+    mcts = MCTS(net=net if TORCH_AVAILABLE else None, sims=sims, c_puct=1.0, device=device)
+    total_positions = 0
+    for i in range(num_games):
+        traj, outcome = self_play_game(mcts, max_moves=200, temp=temp)
+        # Fill values already handled in self_play_game
+        write_transitions_jsonl(traj, output_path)
+        total_positions += len(traj)
+        print(f"Generated game {i+1}/{num_games}: {len(traj)} positions, outcome {outcome}")
+    print(f"Done. Wrote {total_positions} positions to '{output_path}'.")
+
+# ----------------------------- Mode 2: Train From File -----------------------------
+def load_dataset_into_memory(data_path):
+    states = []
+    pis = []
+    vals = []
+    for t in read_transitions_jsonl(data_path):
+        states.append(t.state)
+        pis.append(t.pi)
+        vals.append(t.value)
+    if not states:
+        raise RuntimeError(f"No data found in '{data_path}'.")
+    states = np.stack(states)
+    pis = np.stack(pis)
+    vals = np.array(vals, dtype=np.float32)
+    return states, pis, vals
+
+def iterate_minibatches(states, pis, vals, batch_size, shuffle=True):
+    n = states.shape[0]
+    idxs = np.arange(n)
+    if shuffle:
+        np.random.shuffle(idxs)
+    for start in range(0, n, batch_size):
+        end = min(start + batch_size, n)
+        batch_idx = idxs[start:end]
+        yield states[batch_idx], pis[batch_idx], vals[batch_idx]
+
+def train_from_file(data_path, model_path=None, device='cuda', epochs=1, batch_size=64, lr=1e-3):
+    if not TORCH_AVAILABLE:
+        print("PyTorch not available. Training mode cannot proceed.")
+        return
+    print(f"Loading dataset from '{data_path}' ...")
+    states, pis, vals = load_dataset_into_memory(data_path)
+    net = AlphaNet().to(device)
+    if model_path and os.path.exists(model_path):
+        try:
+            state = torch.load(model_path, map_location=device)
+            net.load_state_dict(state)
+            print(f"Loaded model parameters from '{model_path}'.")
+        except Exception as e:
+            print(f"Warning: Failed to load model from '{model_path}': {e}")
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr)
+    steps = 0
+    for ep in range(epochs):
+        ep_loss = []
+        for b_states, b_pis, b_vals in iterate_minibatches(states, pis, vals, batch_size, shuffle=True):
+            loss, pl, vl = train_step(net, optimizer, (b_states, b_pis, b_vals), device=device)
+            ep_loss.append(loss)
+            steps += 1
+        print(f"Epoch {ep+1}/{epochs}: avg_loss={np.mean(ep_loss):.4f}, batches={len(ep_loss)}")
+    # Save
+    if model_path is None:
+        model_path = os.environ.get('ALPHAXIANGQI_MODEL_PATH', 'alphazero_xiangqi.pt')
+    try:
+        torch.save(net.state_dict(), model_path)
+        print(f"Saved model parameters to '{model_path}'.")
+    except Exception as e:
+        print(f"Warning: Failed to save model to '{model_path}': {e}")
 
 def main():
     parser = argparse.ArgumentParser()
+    # Demo (legacy)
     parser.add_argument('--demo', action='store_true', help='Run a short demo')
+    parser.add_argument('--model_path', type=str, default=None, help='Path to save/load model parameters (.pt). Overrides ALPHAXIANGQI_MODEL_PATH')
+    # Mode 1: generate data
+    parser.add_argument('--generate_data', action='store_true', help='Generate self-play data and save to a JSONL text file')
+    parser.add_argument('--output', type=str, default='selfplay.jsonl', help='Output JSONL file for generated data')
+    parser.add_argument('--num_games', type=int, default=10, help='Number of self-play games to generate')
+    parser.add_argument('--sims', type=int, default=20, help='MCTS simulations per move for generation')
+    parser.add_argument('--temp', type=float, default=1.0, help='Temperature for move selection during generation')
+    # Mode 2: train from file
+    parser.add_argument('--train_from_file', action='store_true', help='Train the model using data from a JSONL text file')
+    parser.add_argument('--data_path', type=str, default=None, help='Path to JSONL data file for training')
+    parser.add_argument('--epochs', type=int, default=1, help='Number of training epochs')
+    parser.add_argument('--batch_size', type=int, default=64, help='Training batch size')
+    parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
+    # Device
+    parser.add_argument('--device', type=str, default='cuda', help='Device to use: "cuda" or "cpu"')
     args = parser.parse_args()
+
+    # Device selection
+    device = args.device
+
     if args.demo:
-        demo_selfplay_and_train()
-    else:
-        print("This script provides a demo. Run with --demo to execute a short self-play + train cycle.")
+        if args.model_path:
+            os.environ['ALPHAXIANGQI_MODEL_PATH'] = args.model_path
+        demo_selfplay_and_train(device=device)
+        return
+
+    if args.generate_data:
+        generate_selfplay_data(
+            output_path=args.output,
+            num_games=args.num_games,
+            sims=args.sims,
+            temp=args.temp,
+            device=device,
+        )
+        return
+
+    if args.train_from_file:
+        if args.model_path:
+            os.environ['ALPHAXIANGQI_MODEL_PATH'] = args.model_path
+        if not args.data_path:
+            print('Error: --data_path is required when --train_from_file is set')
+            return
+        train_from_file(
+            data_path=args.data_path,
+            model_path=args.model_path,
+            device=device,
+            epochs=args.epochs,
+            batch_size=args.batch_size,
+            lr=args.lr,
+        )
+        return
+
+    print("No mode selected. Use one of: --generate_data, --train_from_file, or --demo.")
 
 if __name__ == '__main__':
     main()

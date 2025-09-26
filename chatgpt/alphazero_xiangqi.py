@@ -104,6 +104,7 @@ def generate_legal_moves(board, side):
     # filter moves to avoid capturing same-side piece is already done by generate_piece_moves
     moves = filter_moves_no_self_check(board, moves, side)
     return moves
+
 def filter_moves_no_self_check(board, moves, side):
     """过滤掉导致自己将军的走法"""
     filtered = []
@@ -160,7 +161,7 @@ def generate_piece_moves(board, r, c):
     elif p.lower() == 'h':  # horse: L-shape with blocking
         # horse moves with leg-block check
         horse_dirs = [(-2,-1),(-2,1),(2,-1),(2,1),(-1,-2),(1,-2),(-1,2),(1,2)]
-        leg_checks = [(-1,0),(-1,0),(1,0),(1,0),(0,-1,0,),(0,-1),(0,1),(0,1)]
+        # leg_checks = [(-1,0),(-1,0),(1,0),(1,0),(0,-1,0,),(0,-1),(0,1),(0,1)]
         # we'll check each with corresponding leg
         legs = [(-1,0),(-1,0),(1,0),(1,0),(0,-1),(0,-1),(0,1),(0,1)]
         for (dr,dc),(lr,lc) in zip(horse_dirs, legs):
@@ -187,15 +188,17 @@ def generate_piece_moves(board, r, c):
                 moves.append(((r,c),(nr,nc)))
                 nr += dr; nc += dc
             # now try to find a capture by jumping one screen
-            nr += dr; nc += dc
-            while in_bounds(nr,nc):
-                if board[nr-dr][nc-dc] == '.':
-                    break  # no screen -> cannot capture beyond
-                if board[nr][nc] != '.':
-                    if not same_side(p, board[nr][nc]):
-                        moves.append(((r,c),(nr,nc)))
-                    break
+            # First check if there's a screen (piece) at the current position
+            if in_bounds(nr,nc) and board[nr][nc] != '.':
+                # There's a screen, now look for target beyond it
                 nr += dr; nc += dc
+                while in_bounds(nr,nc):
+                    if board[nr][nc] != '.':
+                        # Found a piece at target position
+                        if not same_side(p, board[nr][nc]):
+                            moves.append(((r,c),(nr,nc)))
+                        break
+                    nr += dr; nc += dc
     elif p.lower() == 'e':  # elephant/minister (diagonal two, cannot cross river)
         deltas = [(-2,-2),(-2,2),(2,-2),(2,2)]
         for dr,dc in deltas:
@@ -270,7 +273,7 @@ def apply_move(board, move):
     b2[r0][c0] = '.'
     return b2, captured
 
-def is_terminal(board):
+def is_terminal(board, side):
     # For simplicity: terminal if one general missing or no legal moves for side to move (basic check)
     generals = {'red':False,'black':False}
     for r in range(10):
@@ -279,6 +282,9 @@ def is_terminal(board):
             if board[r][c]=='g': generals['black']=True
     if not generals['red'] or not generals['black']:
         return True, (1 if generals['red'] and not generals['black'] else -1 if generals['black'] and not generals['red'] else 0)
+    legal = generate_legal_moves(board, side)
+    if len(legal)==0:
+        return True, (-1 if side=='red' else 1)
     return False, 0
 
 # ----------------------------- Neural Network -----------------------------
@@ -428,7 +434,7 @@ class MCTS:
                     node_parent.children[best_move] = node
                     break
             # expansion & evaluation
-            terminal, z = is_terminal(node.board)
+            terminal, z = is_terminal(node.board, node.side)
             if terminal:
                 value = z if node.side=='red' else -z
             else:
@@ -449,15 +455,45 @@ class MCTS:
         pi = self.run(board, side)
         if not pi:
             return None, {}
-        moves = list(pi.keys()); counts = np.array([pi[m] for m in moves], dtype=np.float32)
-        if temperature<=0 or temperature<1e-5:
+        moves = list(pi.keys()); counts = np.array([pi[m] for m in moves], dtype=np.float64)
+        
+        # Handle edge cases for numerical stability
+        if temperature <= 0 or temperature < 1e-5:
             # pick max
             idx = np.argmax(counts)
+            total = counts.sum()
+            if total > 0:
+                return moves[idx], {m: counts[i]/total for i,m in enumerate(moves)}
+            else:
+                return moves[idx], {m: 1.0/len(moves) for m in moves}
+        
+        # Clamp temperature to prevent overflow
+        temperature = max(temperature, 1e-5)
+        temperature = min(temperature, 10.0)  # Prevent extreme values
+        
+        # Apply temperature with numerical stability
+        try:
+            # Add small epsilon to prevent log(0)
+            counts = np.maximum(counts, 1e-10)
+            log_counts = np.log(counts)
+            scaled_log = log_counts / temperature
+            
+            # Prevent overflow by subtracting max
+            max_scaled = np.max(scaled_log)
+            exp_scaled = np.exp(scaled_log - max_scaled)
+            probs = exp_scaled / np.sum(exp_scaled)
+            
+            # Ensure probabilities are finite
+            if not np.all(np.isfinite(probs)):
+                # Fallback to uniform distribution
+                probs = np.ones_like(counts) / len(counts)
+            
+            m = random.choices(moves, weights=probs.tolist(), k=1)[0]
+            return m, {mm: float(p) for mm,p in zip(moves, probs)}
+        except (OverflowError, ValueError, ZeroDivisionError):
+            # Fallback to argmax if numerical issues occur
+            idx = np.argmax(counts)
             return moves[idx], {m: counts[i]/counts.sum() for i,m in enumerate(moves)}
-        counts = counts ** (1/temperature)
-        probs = counts / counts.sum()
-        m = random.choices(moves, weights=probs.tolist(), k=1)[0]
-        return m, {mm: float(p) for mm,p in zip(moves, probs)}
 
 # ----------------------------- Replay Buffer & Self-play -----------------------------
 Transition = namedtuple('Transition', ['state','pi','value'])
@@ -482,11 +518,15 @@ def self_play_game(mcts, max_moves=200, temp=1.0):
     board = initial_board()
     side = 'red'
     traj = []
+    terminal = False
+    z = 0.0
+
     for turn in range(max_moves):
         move, pi = mcts.select_move(board, side, temperature=temp)
         if move is None:
             # no legal move -> terminal; treat as loss for side to move
-            terminal, z = True, -1.0
+            terminal = True
+            z = -1.0 if side == 'red' else 1.0
             break
         # record state and pi distribution mapped to action-space vector
         state = board_to_tensor(board, side)
@@ -499,27 +539,28 @@ def self_play_game(mcts, max_moves=200, temp=1.0):
             pi_vec[idx] = p
         traj.append(Transition(state, pi_vec, None))
         board, captured = apply_move(board, move)
+        side = 'red' if side == 'black' else 'black'
         # check terminal
-        terminal, z = is_terminal(board)
+        terminal, ztmp = is_terminal(board, side)
         if terminal:
+            z = ztmp
             break
-        side = 'red' if side=='black' else 'black'
     # assign final z for all transitions from perspective of player who moved at that state
     if not terminal:
         z = 0.0
     # z is outcome from perspective of current side? is_terminal earlier returned +1 for red win, -1 for black win
     # We need value for each state from perspective of the side to move at that state.
     # We'll use final outcome z_final = +1 red win, -1 black win
-    terminal_outcome = z
+    
     # fill values
     filled = []
     for t in traj:
         # If side at that t.state was 'red' when we recorded side plane=1. We'll interpret value = terminal_outcome for red, -terminal_outcome for black? 
         # Actually terminal_outcome = +1 if red wins. Value from perspective of side_to_move at that state = terminal_outcome if side was red else -terminal_outcome
         side_at_state = 'red' if t.state[14,0,0]==1.0 else 'black'  # our side plane encoding
-        value = terminal_outcome if side_at_state=='red' else -terminal_outcome
+        value = z if side_at_state == 'red' else -z
         filled.append(Transition(t.state, t.pi, value))
-    return filled, terminal_outcome
+    return filled, z
 
 # ----------------------------- Training -----------------------------
 def train_step(net, optimizer, batch, device=None):

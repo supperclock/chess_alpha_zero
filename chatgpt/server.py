@@ -46,30 +46,41 @@ class GameManager:
         # engine
         self.device = 'cuda' if TORCH_OK and torch.cuda.is_available() else 'cpu'
         self.sims = 100
-        self.model_path = model_path or os.environ.get('ALPHAXIANGQI_MODEL_PATH', 'alphazero_xiangqi.pt')
+        self.model_path = 'alphazero_xiangqi.pt'
         self.net = None
         self.mcts = None
-        self._ensure_engine(recreate_net=True, load_only=False)
+        self._ensure_engine(recreate_net=False, load_only=False)
+        # repetition and move limit tracking
+        self.position_counts: Dict[Tuple[Any, ...], int] = {}
+        self.max_plies = 400  # hard cap to avoid endless games
+        self.total_plies = 0
+        self._record_position()
 
     def _ensure_engine(self, recreate_net: bool = False, load_only: bool = False):
         if not TORCH_OK:
             self.net = None
+            print('PyTorch not available. Running in random MCTS mode.')
         else:
             if recreate_net or self.net is None:
                 self.net = AlphaNet()
             try:
                 self.net.to(self.device)
+                print('PyTorch available. Running in MCTS mode with model.inital network.' + self.device)
             except Exception:
                 self.device = 'cpu'
                 self.net.to(self.device)
+                # print('PyTorch not available. Running in random MCTS mode.')
             if self.model_path and os.path.exists(self.model_path):
                 try:
                     state = torch.load(self.model_path, map_location=self.device)
                     self.net.load_state_dict(state)
+                    print('Loaded model. Running in MCTS mode with model.loaded network.' + self.device)
                 except Exception:
+                    print('Failed to load model. Running in random MCTS mode.')
                     pass
             else:
                 if load_only:
+                    print('Model file not found. Running in random MCTS mode.')
                     pass
         self.mcts = MCTS(net=self.net, sims=int(self.sims), c_puct=1.0, device=self.device)
 
@@ -77,12 +88,16 @@ class GameManager:
         with self.lock:
             self.board = initial_board()
             self.side_to_move = 'red'
-            self.human_side = 'red' if human_side not in ('red', 'black') else human_side
+            # allow 'none' meaning AI vs AI
+            self.human_side = human_side if human_side in ('red', 'black', 'none') else 'red'
             self.ai_thinking = False
+            self.position_counts = {}
+            self.total_plies = 0
+            self._record_position()
 
     def get_state(self) -> Dict[str, Any]:
         with self.lock:
-            term, z = is_terminal(self.board)
+            term, z = self._combined_terminal()
             legal = generate_legal_moves(self.board, self.side_to_move)
             return {
                 'board': self.board,
@@ -103,10 +118,13 @@ class GameManager:
                 raise ValueError('Illegal move')
             self.board, _ = apply_move(self.board, move)
             self.side_to_move = 'red' if self.side_to_move == 'black' else 'black'
+            self.total_plies += 1
+            self._record_position()
 
     def ai_move(self) -> Dict[str, Any]:
         with self.lock:
-            if self.side_to_move == self.human_side:
+            # In AI vs AI mode (human_side == 'none'), AI can move regardless of side
+            if self.human_side != 'none' and self.side_to_move == self.human_side:
                 raise ValueError('Not AI\'s turn')
             if self.ai_thinking:
                 raise ValueError('AI already thinking')
@@ -127,9 +145,34 @@ class GameManager:
                 return {'move': None, 'terminal': term, 'result': z}
             self.board, _ = apply_move(self.board, move)
             self.side_to_move = 'red' if self.side_to_move == 'black' else 'black'
-            term, z = is_terminal(self.board)
+            self.total_plies += 1
+            self._record_position()
+            term, z = self._combined_terminal()
             self.ai_thinking = False
             return {'move': move, 'terminal': term, 'result': z}
+
+    def _combined_terminal(self) -> Tuple[bool, int]:
+        # base terminal (capture of general)
+        term, z = is_terminal(self.board, self.side_to_move)
+        if term:
+            return True, z
+        # repetition: threefold (same board and side to move)
+        key = self._board_key()
+        if self.position_counts.get(key, 0) >= 3:
+            return True, 0
+        # move cap
+        if self.total_plies >= self.max_plies:
+            return True, 0
+        return False, 0
+
+    def _board_key(self) -> Tuple[Any, ...]:
+        # include side to move to match repetition rules
+        rows = tuple(tuple(row) for row in self.board)
+        return (rows, self.side_to_move)
+
+    def _record_position(self) -> None:
+        key = self._board_key()
+        self.position_counts[key] = self.position_counts.get(key, 0) + 1
 
     def update_settings(self, sims: int | None, device: str | None, model_path: str | None):
         changed_net = False

@@ -500,8 +500,14 @@ async function newGame() {
   Object.assign(state, data);
   statusText.textContent = '新开局';
   drawBoard();
-  // If AI moves first
-  if (state.side_to_move !== state.human_side) {
+  // If AI moves first or AI vs AI
+  if (state.human_side === 'none') {
+    // continuous AI vs AI until terminal or user changes
+    while (!state.terminal) {
+      await aiMove();
+      if (state.terminal) break;
+    }
+  } else if (state.side_to_move !== state.human_side) {
     await aiMove();
   }
 }
@@ -741,7 +747,7 @@ boardCanvas.addEventListener('click', async (evt) => {
 });
 
 document.getElementById('newGameBtn').addEventListener('click', newGame);
-document.getElementById('applySettings').addEventListener('click', applySettings);
+// Removed settings UI
 
 // Debug mode toggle
 document.addEventListener('keydown', (evt) => {
@@ -753,11 +759,6 @@ document.addEventListener('keydown', (evt) => {
 });
 
 window.addEventListener('load', async () => {
-  const sres = await fetch('/api/settings');
-  const s = await sres.json();
-  document.getElementById('sims').value = s.sims;
-  document.getElementById('device').value = s.device;
-  document.getElementById('modelPath').value = s.model_path || '';
   await fetchState();
 });
 

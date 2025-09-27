@@ -347,6 +347,13 @@
 <body>
     <div class="main-layout">
         <div class="chess-panel">
+            <div style="width:100%;text-align:center;margin-bottom:16px;">
+                <label for="mode-select" style="font-size:16px;color:#8b4513;font-weight:bold;">对弈模式：</label>
+                <select id="mode-select" style="font-size:16px;padding:4px 12px;">
+                    <option value="human-vs-ai">人机对弈</option>
+                    <option value="ai-vs-ai">AI对弈</option>
+                </select>
+            </div>
             <div class="chess-container">             
                 <div class="board-title">中国象棋</div>
                 <div class="chessboard" id="chessboard">

@@ -15,8 +15,7 @@ def ai_move():
     board_state = data['board']
     side_to_move = data['side']
     
-    depth = 2
-    best_move = minimax_root(board_state, depth, side_to_move)
+    best_move = minimax_root(board_state, side_to_move, time_limit=30)
     # logging.info(f"Best move: {best_move}")
     return jsonify(best_move)
     

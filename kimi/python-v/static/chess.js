@@ -4,6 +4,54 @@ let board = Array.from({length:ROWS},()=>Array(COLS).fill(null)); // 二维数�
 let currentSide = 'red';      // 红先
 let gameOver = false; // 游戏结束标志
 let isPaused = false;
+let mode = 'human-vs-ai'; // 默认人机对弈
+let selectedPiece = null;
+let validMoves = [];
+
+function getMode() {
+    const select = document.getElementById('mode-select');
+    return select ? select.value : 'human-vs-ai';
+}
+
+function setModeListener() {
+    const select = document.getElementById('mode-select');
+    if (select) {
+        select.addEventListener('change', function() {
+            mode = select.value;
+            resetGame();
+        });
+    }
+}
+
+function resetGame() {
+    // 清空棋盘和状态，重新初始化
+    const box = document.getElementById('chessboard');
+    box.innerHTML = '<div class="grid-lines">'+box.querySelector('.grid-lines').innerHTML+'</div>';
+    board = Array.from({length:ROWS},()=>Array(COLS).fill(null));
+    currentSide = 'red';
+    gameOver = false;
+    hideStatus();
+    initPieces();
+    if (mode === 'ai-vs-ai') {
+        setTimeout(aiMove, 500);
+    }
+}
+
+function initPieces() {
+    const box = document.getElementById('chessboard');
+    ['red','black'].forEach(color=>{
+      initialPieces[color].forEach(p=>{
+        const el = document.createElement('div');
+        el.className = `piece ${color}-piece`;
+        el.textContent = p.n;
+        el.style.left = (25+p.x*50-20)+'px';
+        el.style.top  = (25+p.y*50-20)+'px';
+        box.appendChild(el);
+        board[p.y][p.x] = el;
+      });
+    });
+    enableHumanMove();
+}
 
 /* 初始排布 */
 const initialPieces = {
@@ -24,30 +72,16 @@ const initialPieces = {
 
 /* ========== 游戏流程和渲染 ========== */
 function initBoard(){
-    const box = document.getElementById('chessboard');
-    /* 创建棋子并登记 board 数组 */
-    ['red','black'].forEach(color=>{
-      initialPieces[color].forEach(p=>{
-        const el = document.createElement('div');
-        el.className = `piece ${color}-piece`;
-        el.textContent = p.n;
-        el.style.left = (25+p.x*50-20)+'px';
-        el.style.top  = (25+p.y*50-20)+'px';
-        box.appendChild(el);
-        board[p.y][p.x] = el;
-      });
-    });
+    setModeListener();
+    resetGame();
     const pauseBtn = document.getElementById('pause-btn');
     pauseBtn.addEventListener('click', function() {
-    isPaused = !isPaused;
-    pauseBtn.textContent = isPaused ? '继续' : '暂停';
-    if (!isPaused) {
-        setTimeout(aiMove, 1000);
-    }
-});
-    
-    // 游戏开始，AI先走
-    aiMove();
+        isPaused = !isPaused;
+        pauseBtn.textContent = isPaused ? '继续' : '暂停';
+        if (!isPaused && mode === 'ai-vs-ai') {
+            setTimeout(aiMove, 1000);
+        }
+    });
 }
 window.addEventListener('DOMContentLoaded', initBoard);
 
@@ -59,7 +93,11 @@ function xy(el){
 }
 
 async function tryMove(move) {
-    if (gameOver) return;    
+    if (gameOver) return;
+    if (isPaused) {
+        showStatus('已暂停，点击“继续”可恢复');
+        return;
+    }
 
     const fromX = move.from.x;
     const fromY = move.from.y;
@@ -104,9 +142,14 @@ async function tryMove(move) {
         gameOver = true;
         showStatus(checkResult.message);
     } else {
-        // 游戏继续，轮到另一方AI走
-        setTimeout(aiMove, 1000);
+        // 游戏继续
+        if (mode === 'ai-vs-ai') {
+            setTimeout(aiMove, 1000);
+        } else if (mode === 'human-vs-ai' && currentSide === 'black') {
+            setTimeout(aiMove, 1000);
+        }
     }
+    clearHints();
 }
 
 async function aiMove() {
@@ -171,4 +214,149 @@ function cloneBoardToState(boardDom) {
     state.push(row);
   }
   return state;
+}
+
+function enableHumanMove() {
+    document.querySelectorAll('.piece.red-piece').forEach(el => {
+        el.onclick = function(e) {
+            if (gameOver || isPaused || mode !== 'human-vs-ai' || currentSide !== 'red') return;
+            clearHints();
+            selectedPiece = el;
+            const pos = xy(el);
+            validMoves = getValidMoves(pos.x, pos.y);
+            showHints(validMoves);
+        };
+    });
+}
+
+function getValidMoves(x, y) {
+    const moves = [];
+    for (let ty = 0; ty < ROWS; ty++) {
+        for (let tx = 0; tx < COLS; tx++) {
+            if (canMoveOn(x, y, tx, ty, 'red')) {
+                moves.push({x: tx, y: ty});
+            }
+        }
+    }
+    return moves;
+}
+
+function showHints(moves) {
+    const box = document.getElementById('chessboard');
+    moves.forEach(m => {
+        const hint = document.createElement('div');
+        hint.className = 'valid-move-hint';
+        hint.style.left = (25 + m.x * 50) + 'px';
+        hint.style.top = (25 + m.y * 50) + 'px';
+        hint.onclick = function() {
+            clearHints();
+            if (selectedPiece) {
+                const from = xy(selectedPiece);
+                tryMove({from: {x: from.x, y: from.y}, to: {x: m.x, y: m.y}});
+                selectedPiece = null;
+                validMoves = [];
+            }
+        };
+        box.appendChild(hint);
+    });
+}
+
+function clearHints() {
+    document.querySelectorAll('.valid-move-hint').forEach(h => h.remove());
+}
+
+function canMoveOn(fx, fy, tx, ty, side) {
+    const piece = board[fy][fx];
+    if (!piece || (side === 'red' && !piece.classList.contains('red-piece'))) return false;
+    const target = board[ty][tx];
+    if (target && target.classList.contains('red-piece')) return false;
+    const name = piece.textContent.trim();
+    // 不能原地不动
+    if (fx === tx && fy === ty) return false;
+    // 不能越界
+    if (tx < 0 || tx >= COLS || ty < 0 || ty >= ROWS) return false;
+    // 走法规则
+    if (["兵","卒"].includes(name)) {
+        // 兵/卒
+        let forward = side === 'red' ? 1 : -1;
+        let isAcrossRiver = (side === 'red' && fy >= 5) || (side === 'black' && fy <= 4);
+        if (tx === fx && ty === fy + forward) return true;
+        if (isAcrossRiver && Math.abs(tx - fx) === 1 && ty === fy) return true;
+        return false;
+    } else if (["車","车"].includes(name)) {
+        // 车
+        if (fx === tx) {
+            let minY = Math.min(fy, ty), maxY = Math.max(fy, ty);
+            for (let i = minY + 1; i < maxY; i++) {
+                if (board[i][fx]) return false;
+            }
+            return true;
+        } else if (fy === ty) {
+            let minX = Math.min(fx, tx), maxX = Math.max(fx, tx);
+            for (let i = minX + 1; i < maxX; i++) {
+                if (board[fy][i]) return false;
+            }
+            return true;
+        }
+        return false;
+    } else if (["馬","马"].includes(name)) {
+        // 马
+        let dx = Math.abs(tx - fx), dy = Math.abs(ty - fy);
+        if (!((dx === 1 && dy === 2) || (dx === 2 && dy === 1))) return false;
+        if (dx === 1) {
+            let blockY = fy + (ty > fy ? 1 : -1);
+            if (board[blockY][fx]) return false;
+        } else {
+            let blockX = fx + (tx > fx ? 1 : -1);
+            if (board[fy][blockX]) return false;
+        }
+        return true;
+    } else if (["炮"].includes(name)) {
+        // 炮
+        let count = 0;
+        if (fx === tx) {
+            let minY = Math.min(fy, ty), maxY = Math.max(fy, ty);
+            for (let i = minY + 1; i < maxY; i++) {
+                if (board[i][fx]) count++;
+            }
+        } else if (fy === ty) {
+            let minX = Math.min(fx, tx), maxX = Math.max(fx, tx);
+            for (let i = minX + 1; i < maxX; i++) {
+                if (board[fy][i]) count++;
+            }
+        } else {
+            return false;
+        }
+        if (target) {
+            return count === 1;
+        } else {
+            return count === 0;
+        }
+    } else if (["帥","將"].includes(name)) {
+        // 帅/将
+        let dx = Math.abs(tx - fx), dy = Math.abs(ty - fy);
+        if (dx + dy !== 1) return false;
+        if (tx < 3 || tx > 5) return false;
+        if (side === 'red' && (ty < 0 || ty > 2)) return false;
+        if (side === 'black' && (ty < 7 || ty > 9)) return false;
+        return true;
+    } else if (["士","仕"].includes(name)) {
+        // 士/仕
+        let dx = Math.abs(tx - fx), dy = Math.abs(ty - fy);
+        if (dx !== 1 || dy !== 1) return false;
+        if (tx < 3 || tx > 5) return false;
+        if (side === 'red' && (ty < 0 || ty > 2)) return false;
+        if (side === 'black' && (ty < 7 || ty > 9)) return false;
+        return true;
+    } else if (["相","象"].includes(name)) {
+        // 相/象
+        let dx = Math.abs(tx - fx), dy = Math.abs(ty - fy);
+        if (dx !== 2 || dy !== 2) return false;
+        if (side === 'red' && ty > 4) return false;
+        if (side === 'black' && ty < 5) return false;
+        let blockX = (fx + tx) / 2, blockY = (fy + ty) / 2;
+        if (board[blockY][blockX]) return false;
+        return true;
+    }
+    return false;
 }

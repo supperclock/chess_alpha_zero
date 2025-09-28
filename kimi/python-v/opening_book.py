@@ -181,7 +181,7 @@ BLACK_BOOK = [
             [Move(7,4,7,7), Move(9,7,7,6), Move(9,1,7,2)]),
     Opening("反宫马应中炮",
             "RHEAKAEHR/9/1C2C4/P1P1P1P1P/9/9/p1p1p1p1p/1c5c1/9/rheakaehr b - - 0 1",
-            [Move(9,1,7,2), Move(7,2,5,2), Move(9,7,7,6)]),
+            [Move(9,1,7,2), Move(7,1,7,4), Move(9,7,7,6)]),
     Opening("卒底炮应仙人指路",
             "RHEAKAEHR/9/1C5C1/P1P1P1P1P/9/4P4/p1p1p1p1p/1c5c1/9/rheakaehr b - - 0 1",
             [Move(6,2,5,2), Move(9,7,7,6), Move(9,1,7,2)]),

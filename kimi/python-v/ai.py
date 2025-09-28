@@ -378,6 +378,50 @@ def generate_moves(board_state, side, tt_best_move=None, depth=0):
             if p and p['side'] == side:
                 pseudo += GEN_MAP[p['type']](board_state, x, y, side)
 
+    # 如果当前方被将军，只生成应将走法
+    if in_check(board_state, side):
+        legal = []
+        for m in pseudo:
+            captured = make_move(board_state, m)
+            # 检查走完后是否解除了被将军
+            if not in_check(board_state, side):
+                # ...评分部分...
+                piece = board_state[m.fy][m.fx]
+                score = 0
+                piece_type = piece['type']
+                key = (piece_type, side, m.fy, m.fx, m.ty, m.tx)
+                history_score = HISTORY_TABLE.get(key, 0)
+                if captured:
+                    victim_value = PIECE_VALUES[captured['type']]
+                    aggressor_value = PIECE_VALUES[piece_type]
+                    score = 1000000
+                    score += victim_value * 100 - aggressor_value
+                    if captured['type'] in ('兵', '卒'):
+                        if (captured['type'] == '兵' and m.ty >= 5) or \
+                           (captured['type'] == '卒' and m.ty <= 4):
+                            score += 50
+                else:
+                    old_pst = PST[(piece_type, side)][m.fy][m.fx]
+                    new_pst = PST[(piece_type, side)][m.ty][m.tx]
+                    score += (new_pst - old_pst) * 10
+                    score += history_score // 2
+                    if piece_type in ('馬', '炮', '車'):
+                        center_dist = abs(4 - m.tx) + abs(4 - m.ty)
+                        score += (7 - center_dist) * 5
+                km = KILLER_MOVES[depth]
+                if m == km[0]: score += 5000
+                elif m == km[1]: score += 3000
+                m.score = score
+                legal.append(m)
+            unmake_move(board_state, m, captured)
+        legal.sort(key=lambda x: x.score, reverse=True)
+        if tt_best_move:
+            for i, m in enumerate(legal):
+                if m == tt_best_move:
+                    legal.insert(0, legal.pop(i))
+                    break
+        return legal
+
     # Filter and score legal moves
     legal = []
     
@@ -580,6 +624,64 @@ def evaluate_board(board_state):
                          if 0 <= y < ROWS and 0 <= x < COLS)
         score -= palace_att * 25      # 黑方被攻击，黑方减分
 
+    # 8. 协同分（如双车、炮架马、连兵等）
+    # 双车同线加分
+    black_rooks = [(y, x) for y in range(ROWS) for x in range(COLS)
+                   if (q := board_state[y][x]) and q['side'] == 'black' and q['type'] in ('車', '车')]
+    if len(black_rooks) == 2:
+        if black_rooks[0][0] == black_rooks[1][0] or black_rooks[0][1] == black_rooks[1][1]:
+            score += 60  # 双车同线
+    red_rooks = [(y, x) for y in range(ROWS) for x in range(COLS)
+                 if (q := board_state[y][x]) and q['side'] == 'red' and q['type'] in ('車', '车')]
+    if len(red_rooks) == 2:
+        if red_rooks[0][0] == red_rooks[1][0] or red_rooks[0][1] == red_rooks[1][1]:
+            score -= 60
+    # 炮架马（炮与马相邻）
+    for y in range(ROWS):
+        for x in range(COLS):
+            p = board_state[y][x]
+            if p and p['side'] == 'black' and p['type'] in ('炮', '砲'):
+                for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
+                    nx, ny = x+dx, y+dy
+                    if 0<=nx<COLS and 0<=ny<ROWS:
+                        q = board_state[ny][nx]
+                        if q and q['side']=='black' and q['type'] in ('馬','马'):
+                            score += 40
+            if p and p['side'] == 'red' and p['type'] in ('炮', '砲'):
+                for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
+                    nx, ny = x+dx, y+dy
+                    if 0<=nx<COLS and 0<=ny<ROWS:
+                        q = board_state[ny][nx]
+                        if q and q['side']=='red' and q['type'] in ('馬','马'):
+                            score -= 40
+    # 连兵（黑方）
+    black_soldiers = [(y, x) for y in range(ROWS) for x in range(COLS)
+                      if (q := board_state[y][x]) and q['side'] == 'black' and q['type'] == '卒']
+    for y, x in black_soldiers:
+        for dx in [-1, 1]:
+            nx = x + dx
+            if 0 <= nx < COLS and board_state[y][nx] and board_state[y][nx]['side'] == 'black' and board_state[y][nx]['type'] == '卒':
+                score += 15
+    # 连兵（红方）
+    red_soldiers = [(y, x) for y in range(ROWS) for x in range(COLS)
+                    if (q := board_state[y][x]) and q['side'] == 'red' and q['type'] == '兵']
+    for y, x in red_soldiers:
+        for dx in [-1, 1]:
+            nx = x + dx
+            if 0 <= nx < COLS and board_state[y][nx] and board_state[y][nx]['side'] == 'red' and board_state[y][nx]['type'] == '兵':
+                score -= 15
+    # 残局特征：单兵胜车
+    if sum(1 for y in range(ROWS) for x in range(COLS)
+           if (q := board_state[y][x]) and q['side'] == 'black' and q['type'] == '卒') == 1 and \
+       sum(1 for y in range(ROWS) for x in range(COLS)
+           if (q := board_state[y][x]) and q['side'] == 'red' and q['type'] in ('車','车')) == 1:
+        score += 80  # 黑方单兵胜车
+    if sum(1 for y in range(ROWS) for x in range(COLS)
+           if (q := board_state[y][x]) and q['side'] == 'red' and q['type'] == '兵') == 1 and \
+       sum(1 for y in range(ROWS) for x in range(COLS)
+           if (q := board_state[y][x]) and q['side'] == 'black' and q['type'] in ('車','车')) == 1:
+        score -= 80  # 红方单兵胜车
+
     # 8. 将军持续威胁（非简单将军惩罚）
     if in_check(board_state, 'red'):
         score += 200
@@ -660,13 +762,24 @@ def negamax(board_state, depth, alpha, beta, side_to_move, color_multiplier, cur
         if flag == 'UPPER' and tt_val < beta: beta = tt_val
         if alpha >= beta: return tt_val
     
+    # Null Move Pruning
+    if depth >= 3 and not in_check(board_state, side_to_move):
+        R = 2 if depth > 4 else 1
+        # Make null move (skip turn)
+        null_zob = compute_zobrist(board_state, 'red' if side_to_move == 'black' else 'black')
+        null_val = -negamax(board_state, depth - 1 - R, -beta, -beta + 1,
+                           'red' if side_to_move == 'black' else 'black',
+                           -color_multiplier, current_depth + 1, start_time, time_limit)
+        if null_val >= beta:
+            return beta
+
     # Move generation
     tt_best_move = tt_entry.get('best_move') if tt_entry else None
     moves = generate_moves(board_state, side_to_move, tt_best_move, current_depth)
-    
+
     best_val = -MATE_SCORE - 1 # Sentinel value
     best_move = None
-    
+
     if not moves:
         # Checkmate or Stalemate
         if in_check(board_state, side_to_move):
@@ -674,15 +787,28 @@ def negamax(board_state, depth, alpha, beta, side_to_move, color_multiplier, cur
         return 0 # Stalemate
     
     original_alpha = alpha
-    
-    for m in moves:
+
+    for i, m in enumerate(moves):
+        # Late Move Reductions (LMR)
+        reduction = 0
+        if depth >= 3 and i > 2 and not in_check(board_state, side_to_move):
+            reduction = 1
         # Apply move
         captured = make_move(board_state, m)
-        
         try:
-            val = -negamax(board_state, depth-1, -beta, -alpha, 
-                           'red' if side_to_move == 'black' else 'black', 
-                           -color_multiplier, current_depth + 1, start_time, time_limit)
+            if reduction:
+                val = -negamax(board_state, depth-1-reduction, -beta, -alpha,
+                               'red' if side_to_move == 'black' else 'black',
+                               -color_multiplier, current_depth + 1, start_time, time_limit)
+                # Re-search if reduced node produces a cutoff
+                if val > alpha:
+                    val = -negamax(board_state, depth-1, -beta, -alpha,
+                                   'red' if side_to_move == 'black' else 'black',
+                                   -color_multiplier, current_depth + 1, start_time, time_limit)
+            else:
+                val = -negamax(board_state, depth-1, -beta, -alpha,
+                               'red' if side_to_move == 'black' else 'black',
+                               -color_multiplier, current_depth + 1, start_time, time_limit)
         except TimeoutError:
             unmake_move(board_state, m, captured)
             raise

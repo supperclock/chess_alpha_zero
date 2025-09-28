@@ -15,7 +15,7 @@ def ai_move():
     board_state = data['board']
     side_to_move = data['side']
     
-    best_move = minimax_root(board_state, side_to_move, time_limit=30)
+    best_move = minimax_root(board_state, side_to_move, time_limit=10)
     # logging.info(f"Best move: {best_move}")
     return jsonify(best_move)
     
@@ -31,6 +31,28 @@ def check_game_over_endpoint():
     except Exception as e:
       logging.error(f"Error in /check_game_over: {e}")
       return jsonify({"error": str(e)}), 500
+
+@app.route('/opening_stats', methods=['GET'])
+def get_opening_stats_endpoint():
+    """获取开局库统计信息"""
+    try:
+        from opening_book import get_opening_stats
+        stats = get_opening_stats()
+        return jsonify(stats)
+    except Exception as e:
+        logging.error(f"Error in /opening_stats: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/reset_opening_stats', methods=['POST'])
+def reset_opening_stats_endpoint():
+    """重置开局库统计信息"""
+    try:
+        from opening_book import reset_opening_stats
+        reset_opening_stats()
+        return jsonify({"message": "开局库统计已重置"})
+    except Exception as e:
+        logging.error(f"Error in /reset_opening_stats: {e}")
+        return jsonify({"error": str(e)}), 500
 
 # 创建static目录
 static_dir = 'static'

@@ -7,6 +7,7 @@ let isPaused = false;
 let mode = 'human-vs-ai'; // 默认人机对弈
 let selectedPiece = null;
 let validMoves = [];
+let lastMoveFrom = null; // 存储上一步的起点位置 {x, y}
 
 function getMode() {
     const select = document.getElementById('mode-select');
@@ -124,6 +125,19 @@ async function tryMove(move) {
     setTimeout(() => {
         pieceEl.classList.remove('move-effect', 'flame-effect');
     }, 400);
+
+    // 移除之前的起点提示
+    const lastFromDot = document.querySelector('.move-origin');
+    if (lastFromDot) {
+        lastFromDot.parentNode.removeChild(lastFromDot);
+    }
+
+    // 添加新的起点提示
+    const fromDot = document.createElement('div');
+    fromDot.className = 'move-origin';
+    fromDot.style.left = (25 + fromX * 50 - 6) + 'px';
+    fromDot.style.top = (25 + fromY * 50 - 6) + 'px';
+    document.getElementById('chessboard').appendChild(fromDot);
 
     document.querySelectorAll('.piece').forEach(p => p.classList.remove('last-move'));
     pieceEl.classList.add('last-move');

@@ -170,9 +170,10 @@ def in_check(board, side, king_pos=None):
     for dx, dy in H8:
         nx, ny = x + dx, y + dy
         if not inside(nx, ny): continue
-        # Check horse leg blocking
-        mx, my = x + dx - (dx//abs(dx)) if dx else x, y + dy - (dy//abs(dy)) if dy else y
-        if board[my][mx] is not None: continue
+        # Check horse leg blocking: the "leg" is halfway to the target (dx//2, dy//2)
+        leg_x = x + (dx // 2)
+        leg_y = y + (dy // 2)
+        if board[leg_y][leg_x] is not None: continue
         p = board[ny][nx]
         if p and p['side'] == opp and p['type'] in {'馬','傌','马'}: return True
         
@@ -227,22 +228,19 @@ def gen_cannon(board, x, y, side):
 def gen_horse(board, x, y, side):
     """Generate horse moves"""
     moves = []
-    # Simplified check for horse leg blocking
-    BLOCKERS = {
-        (1, 2): (0, 1), (-1, 2): (0, 1), 
-        (1, -2): (0, -1), (-1, -2): (0, -1),
-        (2, 1): (1, 0), (-2, 1): (-1, 0),
-        (2, -1): (1, 0), (-2, -1): (-1, 0),
-    }
-    
+    # Horse leg blocking: the blocker square is halfway (dx//2, dy//2)
     for dx, dy in H8:
         nx, ny = x + dx, y + dy
         if not inside(nx, ny): continue
-        
+
         # Check horse leg blocking
-        leg_dx, leg_dy = BLOCKERS.get((dx, dy), (dx//2, dy//2)) # Fallback just in case
-        if board[y + leg_dy][x + leg_dx] is not None: continue
-            
+        leg_x = x + (dx // 2)
+        leg_y = y + (dy // 2)
+        if not inside(leg_x, leg_y):
+            continue
+        if board[leg_y][leg_x] is not None:
+            continue
+
         t = board[ny][nx]
         if t is None or t['side'] != side:
             moves.append(Move(fy=y, fx=x, ty=ny, tx=nx))
@@ -382,11 +380,15 @@ def generate_moves(board_state, side, tt_best_move=None, depth=0):
     if in_check(board_state, side):
         legal = []
         for m in pseudo:
+            # capture the moving piece reference before applying the move
+            piece = board_state[m.fy][m.fx]
+            # Defensive: if the from-square is unexpectedly empty, skip this pseudo-move
+            if piece is None:
+                continue
             captured = make_move(board_state, m)
             # 检查走完后是否解除了被将军
             if not in_check(board_state, side):
                 # ...评分部分...
-                piece = board_state[m.fy][m.fx]
                 score = 0
                 piece_type = piece['type']
                 key = (piece_type, side, m.fy, m.fx, m.ty, m.tx)
@@ -426,6 +428,11 @@ def generate_moves(board_state, side, tt_best_move=None, depth=0):
     legal = []
     
     for m in pseudo:
+        # Reference the moving piece before applying the move (make_move clears the from-square)
+        piece = board_state[m.fy][m.fx]
+        # Defensive: skip if no piece is found on the from-square
+        if piece is None:
+            continue
         # Make move on current board (fast application)
         captured = make_move(board_state, m)
         
@@ -444,7 +451,7 @@ def generate_moves(board_state, side, tt_best_move=None, depth=0):
         
         if is_legal:
             # Score the move (MVV/LVA for captures + PST)
-            piece = board_state[m.fy][m.fx]
+            # 'piece' was captured above before make_move
             
             score = 0
             # 历史启发值基准分

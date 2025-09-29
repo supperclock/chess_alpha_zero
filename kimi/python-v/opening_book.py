@@ -254,7 +254,7 @@ BLACK_BOOK = [
             [Move(7,4,4,4), Move(9,1,7,2), Move(7,7,7,4)]),  # 中炮平五
     Opening("对马局",
             "R1EAKAEHR/9/1CH4C1/P1P1P1P1P/9/9/p1p1p1p1p/1c5c1/9/rheakaehr b - - 0 1",
-            [Move(9,1,7,2), Move(7,2,5,2), Move(9,7,7,6)]),  # 马二进三
+            [Move(9,1,7,2), Move(7,1,5,1), Move(9,7,7,6)]),  # 马二进三
     Opening("顺炮对马",
             "R1EAKAEHR/9/1CH4C1/P1P1P1P1P/9/9/p1p1p1p1p/1c5c1/9/rheakaehr b - - 0 1",
             [Move(7,7,7,4), Move(9,1,7,2), Move(9,7,7,6)])   # 炮八平五

@@ -11,8 +11,8 @@ from collections import defaultdict
 from opening_book import get_opening_move, Move
 
 # --- Configuration ---
-MAX_DEPTH = 6
-TIME_LIMIT = 5.0
+MAX_DEPTH = 10
+TIME_LIMIT = 50.0
 INITIAL_WINDOW = 800  # 第一层使用更大的初始窗口
 ASPIRATION_WINDOW_DELTA = 300  # 后续层级的初始窗口
 MAX_RESEARCH_COUNT = 3  # 最大重新搜索次数
@@ -37,7 +37,7 @@ PIECE_VALUES = {
     '將': MATE_SCORE, '帥': MATE_SCORE,
     '車': 900, '俥': 900, '车': 900,
     '馬': 450, '傌': 450, '马': 450,
-    '炮': 400, '砲': 400,
+    '炮': 800, '砲': 800,
     '相': 200, '象': 200,
     '仕': 200, '士': 200,
     '兵': 100, '卒': 100
@@ -169,13 +169,21 @@ def in_check(board, side, king_pos=None):
     # 2. Horse attack
     for dx, dy in H8:
         nx, ny = x + dx, y + dy
-        if not inside(nx, ny): continue
-        # Check horse leg blocking: the "leg" is halfway to the target (dx//2, dy//2)
-        leg_x = x + (dx // 2)
-        leg_y = y + (dy // 2)
-        if board[leg_y][leg_x] is not None: continue
+        if not inside(nx, ny):
+            continue
+        # Check horse leg blocking: the blocker is orthogonally adjacent
+        # in the primary direction (the component with absolute value 2)
+        if abs(dx) == 2:
+            leg_x, leg_y = x + (dx // 2), y
+        else:
+            leg_x, leg_y = x, y + (dy // 2)
+        if not inside(leg_x, leg_y):
+            continue
+        if board[leg_y][leg_x] is not None:
+            continue
         p = board[ny][nx]
-        if p and p['side'] == opp and p['type'] in {'馬','傌','马'}: return True
+        if p and p['side'] == opp and p['type'] in {'馬','傌','马'}:
+            return True
         
     return False
 
@@ -233,9 +241,11 @@ def gen_horse(board, x, y, side):
         nx, ny = x + dx, y + dy
         if not inside(nx, ny): continue
 
-        # Check horse leg blocking
-        leg_x = x + (dx // 2)
-        leg_y = y + (dy // 2)
+        # Check horse leg blocking: orthogonal adjacent in primary direction
+        if abs(dx) == 2:
+            leg_x, leg_y = x + (dx // 2), y
+        else:
+            leg_x, leg_y = x, y + (dy // 2)
         if not inside(leg_x, leg_y):
             continue
         if board[leg_y][leg_x] is not None:
@@ -905,6 +915,7 @@ def minimax_root(board_state, side, time_limit=TIME_LIMIT):
         # TT best move ordering is handled inside generate_moves
         
         # Main search loop with re-search for aspiration window failure
+        used_full_window = False  # ensure we only expand to full window once per depth
         while True:
             try:
                 original_alpha = alpha
@@ -939,9 +950,15 @@ def minimax_root(board_state, side, time_limit=TIME_LIMIT):
                 if final_val >= original_beta:
                     research_count += 1
                     if research_count >= MAX_RESEARCH_COUNT:
-                        log(f"Depth {depth}: 达到最大重搜次数，使用全窗口")
-                        alpha = final_val
-                        beta = MATE_SCORE
+                        if not used_full_window:
+                            log(f"Depth {depth}: 达到最大重搜次数，使用全窗口")
+                            # Use true full window once
+                            alpha = -MATE_SCORE
+                            beta = MATE_SCORE
+                            used_full_window = True
+                            continue
+                        # Already used full window, stop re-searching to avoid repeated logs
+                        break
                     else:
                         window_size = ASPIRATION_WINDOW_DELTA * (2 ** research_count)
                         log(f"Depth {depth}: Fail High. Re-search with wider window {window_size}")
@@ -951,9 +968,15 @@ def minimax_root(board_state, side, time_limit=TIME_LIMIT):
                 elif final_val <= original_alpha:
                     research_count += 1
                     if research_count >= MAX_RESEARCH_COUNT:
-                        log(f"Depth {depth}: 达到最大重搜次数，使用全窗口")
-                        alpha = -MATE_SCORE
-                        beta = final_val
+                        if not used_full_window:
+                            log(f"Depth {depth}: 达到最大重搜次数，使用全窗口")
+                            # Use true full window once
+                            alpha = -MATE_SCORE
+                            beta = MATE_SCORE
+                            used_full_window = True
+                            continue
+                        # Already used full window, stop re-searching to avoid repeated logs
+                        break
                     else:
                         window_size = ASPIRATION_WINDOW_DELTA * (2 ** research_count)
                         log(f"Depth {depth}: Fail Low. Re-search with wider window {window_size}")

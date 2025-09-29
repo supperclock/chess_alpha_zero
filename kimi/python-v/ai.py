@@ -12,7 +12,7 @@ from opening_book import get_opening_move, Move
 
 # --- Configuration ---
 MAX_DEPTH = 10
-TIME_LIMIT = 50.0
+TIME_LIMIT = 100.0
 INITIAL_WINDOW = 800  # 第一层使用更大的初始窗口
 ASPIRATION_WINDOW_DELTA = 300  # 后续层级的初始窗口
 MAX_RESEARCH_COUNT = 3  # 最大重新搜索次数

@@ -175,7 +175,7 @@ BLACK_BOOK = [
     # 红方炮二平五的应招
     Opening("屏风马应中炮变例",
             "RHEAKAEHR/9/4C2C1/P1P1P1P1P/9/9/p1p1p1p1p/1c5c1/9/rheakaehr b - - 0 1",
-            [Move(7,4,7,7), Move(9,7,7,6), Move(9,1,7,2)]),
+            [Move(7,7,7,4), Move(9,7,7,6), Move(9,1,7,2)]),
     Opening("屏风马应中炮",
             "RHEAKAEHR/9/1C2C4/P1P1P1P1P/9/9/p1p1p1p1p/1c5c1/9/rheakaehr b - - 0 1",
             [Move(7,4,7,7), Move(9,7,7,6), Move(9,1,7,2)]),

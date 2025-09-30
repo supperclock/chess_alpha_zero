@@ -1,5 +1,8 @@
 /* ========== 基础数据 ========== */
 const ROWS = 10, COLS = 9;
+const PRIMARY_BACKEND_URL = 'https://xq.qzz8io.qzz.io'; // 主后端服务器URL
+const FALLBACK_BACKEND_URL = 'http://localhost:5000'; // 备用后端服务器URL
+let BACKEND_URL = PRIMARY_BACKEND_URL; // 当前使用的后端URL
 let board = Array.from({length:ROWS},()=>Array(COLS).fill(null)); // 二维数组：存棋子 DOM
 let currentSide = 'red';      // 红先
 let gameOver = false; // 游戏结束标志
@@ -8,6 +11,27 @@ let mode = 'human-vs-ai'; // 默认人机对弈
 let selectedPiece = null;
 let validMoves = [];
 let lastMoveFrom = null; // 存储上一步的起点位置 {x, y}
+
+// 检查并切换后端URL的函数
+async function checkAndSwitchBackend() {
+    if (BACKEND_URL === FALLBACK_BACKEND_URL) {
+        return; // 已经在使用备用URL，无需再检查
+    }
+    
+    try {
+        const response = await fetch(`${PRIMARY_BACKEND_URL}/check_game_over`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ board: [] })
+        });
+        if (!response.ok) {
+            throw new Error('Primary backend not available');
+        }
+    } catch (error) {
+        console.log('主后端服务器不可用，切换到备用服务器:', FALLBACK_BACKEND_URL);
+        BACKEND_URL = FALLBACK_BACKEND_URL;
+    }
+}
 
 function getMode() {
     const select = document.getElementById('mode-select');
@@ -146,11 +170,22 @@ async function tryMove(move) {
     
     // 检查游戏是否结束
     const boardState = cloneBoardToState(board);
-    const checkResponse = await fetch('http://localhost:5000/check_game_over', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ board: boardState })
-    });
+    let checkResponse;
+    try {
+        checkResponse = await fetch(`${BACKEND_URL}/check_game_over`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ board: boardState })
+        });
+    } catch (error) {
+        // 如果主URL失败，尝试切换到备用URL
+        await checkAndSwitchBackend();
+        checkResponse = await fetch(`${BACKEND_URL}/check_game_over`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ board: boardState })
+        });
+    }
     const checkResult = await checkResponse.json();
     if (checkResult.game_over) {
         gameOver = true;
@@ -176,11 +211,22 @@ async function aiMove() {
 
   const boardState = cloneBoardToState(board);
   try {
-    const response = await fetch('http://localhost:5000/ai_move', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ board: boardState, side: currentSide })
-    });
+    let response;
+    try {
+        response = await fetch(`${BACKEND_URL}/ai_move`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ board: boardState, side: currentSide })
+        });
+    } catch (error) {
+        // 如果主URL失败，尝试切换到备用URL
+        await checkAndSwitchBackend();
+        response = await fetch(`${BACKEND_URL}/ai_move`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ board: boardState, side: currentSide })
+        });
+    }
     const move = await response.json();
     // 如果move为null，表示AI认输
     if (move === null) {

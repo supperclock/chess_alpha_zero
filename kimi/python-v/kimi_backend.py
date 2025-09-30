@@ -12,12 +12,21 @@ CORS(app)
 def ai_move():    
     # logging.info(f"/ai_move {request.method} data={request.json}")
     data = request.json
+    if not data:
+        return jsonify({"error": "No JSON data provided"}), 400
+    
+    if 'board' not in data:
+        return jsonify({"error": "Missing 'board' field"}), 400
+    if 'side' not in data:
+        return jsonify({"error": "Missing 'side' field"}), 400
+        
     board_state = data['board']
     side_to_move = data['side']
     
     best_move = minimax_root(board_state, side_to_move, time_limit=10)
     # logging.info(f"Best move: {best_move}")
     return jsonify(best_move)
+  
     
 
 @app.route('/check_game_over', methods=['POST'])
@@ -25,7 +34,12 @@ def check_game_over_endpoint():
     try:
     #   logging.info(f"[LOG] /check_game_over {request.method} data={request.json}")
       data = request.json
-      data = request.json
+      if not data:
+          return jsonify({"error": "No JSON data provided"}), 400
+      
+      if 'board' not in data:
+          return jsonify({"error": "Missing 'board' field"}), 400
+          
       board_state = data['board']
       return jsonify(check_game_over(board_state))
     except Exception as e:

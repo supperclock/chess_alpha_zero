@@ -1,6 +1,7 @@
 """
-Optimized Chinese Chess AI
-Streamlined version with only essential functions and improved structure.
+Advanced Chinese Chess AI (完整文件)
+包含：PVS + Extensions + SEE + 分阶段评估 + 残局特判
+兼容原有 make_move/unmake_move/generate_moves/GEN_MAP 等接口
 """
 
 import random
@@ -13,13 +14,13 @@ from opening_book import get_opening_move, Move
 # --- Configuration ---
 MAX_DEPTH = 10
 TIME_LIMIT = 100.0
-INITIAL_WINDOW = 800  # 第一层使用更大的初始窗口
-ASPIRATION_WINDOW_DELTA = 300  # 后续层级的初始窗口
-MAX_RESEARCH_COUNT = 3  # 最大重新搜索次数
-MIN_TIME_LEFT = 0.5  # 剩余最小时间阈值（秒）
+INITIAL_WINDOW = 800
+ASPIRATION_WINDOW_DELTA = 300
+MAX_RESEARCH_COUNT = 3
+MIN_TIME_LEFT = 0.5
 
 logging.basicConfig(
-    filename='kimi_backend_optimized.log',
+    filename='kimi_backend_advanced.log',
     level=logging.INFO,
     format='[%(asctime)s] %(levelname)s: %(message)s'
 )
@@ -31,7 +32,7 @@ def log(msg):
 ROWS = 10
 COLS = 9
 MATE_SCORE = 1000000
-MAX_HISTORY_SCORE = 1000000 # For history heuristic
+MAX_HISTORY_SCORE = 1000000
 
 PIECE_VALUES = {
     '將': MATE_SCORE, '帥': MATE_SCORE,
@@ -43,7 +44,7 @@ PIECE_VALUES = {
     '兵': 100, '卒': 100
 }
 
-# Initial board setup (Simplified to match original list structure)
+# Initial setup
 INITIAL_SETUP = [
     [{'type': '車', 'side': 'red'}, {'type': '馬', 'side': 'red'}, {'type': '相', 'side': 'red'}, {'type': '仕', 'side': 'red'}, {'type': '帥', 'side': 'red'}, {'type': '仕', 'side': 'red'}, {'type': '相', 'side': 'red'}, {'type': '馬', 'side': 'red'}, {'type': '車', 'side': 'red'}],
     [None]*9,
@@ -59,29 +60,20 @@ INITIAL_SETUP = [
 
 # Piece-square tables
 PST = defaultdict(lambda: [[0]*COLS for _ in range(ROWS)])
-# Soldiers advancement and center control
 for y in range(ROWS):
     for x in range(COLS):
-        # Red Soldier
-        PST[('兵','red')][y][x] = (y - 3) * 5 
+        PST[('兵','red')][y][x] = (y - 3) * 5
         if 3 <= x <= 5: PST[('兵','red')][y][x] += 5
-        # Black Soldier
         PST[('卒','black')][y][x] = (6 - y) * 5
         if 3 <= x <= 5: PST[('卒','black')][y][x] += 5
-
-# Central files for Rooks
-for y in range(ROWS):
-    for x in range(COLS):
         val = 15 if 3 <= x <= 5 else 0
         PST[('車','black')][y][x] += val
         PST[('車','red')][y][x] += val
-
-# Cannon positions
 for x in range(COLS):
     PST[('炮','black')][7][x] += 10
     PST[('炮','red')][2][x] += 10
 
-# ---- Zobrist Hashing ----
+# ---- Zobrist ----
 PIECES = list(set(PIECE_VALUES.keys()))
 SIDES = ['red','black']
 random.seed(123456)
@@ -93,26 +85,21 @@ for p in PIECES:
                 ZOBRIST[(p,s,y,x)] = random.getrandbits(64)
 ZOBRIST_SIDE = random.getrandbits(64)
 
-# Transposition table, Killer moves, and History Heuristic
+# Tables
 TT = {}
 KILLER_MOVES = defaultdict(lambda: [None, None])
 HISTORY_TABLE = defaultdict(lambda: 0)
 
-# Opening book
-# Converted to Move class
-
-# ---- Movement Direction Constants ----
-D4 = ((1,0),(-1,0),(0,1),(0,-1))          # Straight lines
-D4_O = ((1,1),(1,-1),(-1,1),(-1,-1))      # Diagonal
-H8 = ((1,2),(2,1),(-1,2),(-2,1),          # Horse
-      (1,-2),(2,-1),(-1,-2),(-2,-1))
-E4 = ((2,2),(2,-2),(-2,2),(-2,-1))        # Elephant (Fixed typo in original E4 definition)
+# Directions
+D4 = ((1,0),(-1,0),(0,1),(0,-1))
+D4_O = ((1,1),(1,-1),(-1,1),(-1,-1))
+H8 = ((1,2),(2,1),(-1,2),(-2,1),(1,-2),(2,-1),(-1,-2),(-2,-1))
+E4 = ((2,2),(2,-2),(-2,2),(-2,-2))
 
 def inside(x, y):
-    return 0 <= x < 9 and 0 <= y < 10
+    return 0 <= x < COLS and 0 <= y < ROWS
 
 def find_general(board_state, side):
-    """Find the general/king position"""
     for y in range(ROWS):
         for x in range(COLS):
             piece = board_state[y][x]
@@ -121,7 +108,6 @@ def find_general(board_state, side):
     return None
 
 def kings_facing(board, red_king, black_king):
-    """Check if kings are facing each other"""
     if red_king['x'] != black_king['x']:
         return False
     x = red_king['x']
@@ -132,64 +118,47 @@ def kings_facing(board, red_king, black_king):
     return True
 
 def in_check(board, side, king_pos=None):
-    """Check if side is in check (Simplified and optimized logic)"""
     if king_pos is None:
         king_pos = find_general(board, side)
         if king_pos is None: return False
     x, y = king_pos['x'], king_pos['y']
     opp = 'red' if side == 'black' else 'black'
-    
-    # 1. Chariot/General/Cannon/Soldier attacks
+    # straight lines (chariot, cannon, general, soldier)
     for dx, dy in D4:
-        # Straight-line attack (Chariot, General)
         steps = 0
         for i in range(1, 10):
             nx, ny = x + dx * i, y + dy * i
             if not inside(nx, ny): break
             p = board[ny][nx]
-            
             if p is not None:
                 if p['side'] == opp:
                     t = p['type']
-                    # Chariot (must be the first piece)
                     if t in {'車','俥','车'} and steps == 0: return True
-                    # Cannon (must jump once)
                     if t in {'炮','砲'} and steps == 1: return True
-                    # General (must be the first piece, handles flying general check too)
                     if t in {'帥','將'} and steps == 0: return True
-                    # Soldier (handles adjacent check)
                     if t in {'兵','卒'} and steps == 0:
-                        is_forward = (t == '兵' and dy == 1 and dx == 0) or \
-                                     (t == '卒' and dy == -1 and dx == 0)
+                        is_forward = (t == '兵' and dy == 1 and dx == 0) or (t == '卒' and dy == -1 and dx == 0)
                         is_sideways = (y >= 5 if side == 'red' else y <= 4) and dy == 0 and abs(dx) == 1
                         if is_forward or is_sideways: return True
                 steps += 1
-                if steps > 1: break # Stop searching after the second piece is found
-    
-    # 2. Horse attack
+                if steps > 1: break
+    # horse
     for dx, dy in H8:
         nx, ny = x + dx, y + dy
-        if not inside(nx, ny):
-            continue
-        # Check horse leg blocking: the blocker is orthogonally adjacent
-        # in the primary direction (the component with absolute value 2)
+        if not inside(nx, ny): continue
         if abs(dx) == 2:
             leg_x, leg_y = x + (dx // 2), y
         else:
             leg_x, leg_y = x, y + (dy // 2)
-        if not inside(leg_x, leg_y):
-            continue
-        if board[leg_y][leg_x] is not None:
-            continue
+        if not inside(leg_x, leg_y): continue
+        if board[leg_y][leg_x] is not None: continue
         p = board[ny][nx]
         if p and p['side'] == opp and p['type'] in {'馬','傌','马'}:
             return True
-        
     return False
 
-# ---- Move Generation Functions ----
+# ---- Move generation functions ----
 def gen_chariot(board, x, y, side):
-    """Generate chariot moves"""
     moves = []
     for dx, dy in D4:
         nx, ny = x + dx, y + dy
@@ -206,69 +175,50 @@ def gen_chariot(board, x, y, side):
     return moves
 
 def gen_cannon(board, x, y, side):
-    """Generate cannon moves"""
     moves = []
     for dx, dy in D4:
-        # Phase 1: Move through empty squares
         nx, ny = x + dx, y + dy
         while inside(nx, ny) and board[ny][nx] is None:
             moves.append(Move(fy=y, fx=x, ty=ny, tx=nx))
             nx += dx
             ny += dy
-        # Phase 2: Jump over first obstacle to capture
         if not inside(nx, ny): continue
-        
-        # nx, ny is the first obstacle (cannon "eye")
-        
         nx += dx
         ny += dy
-        
         while inside(nx, ny):
             t = board[ny][nx]
             if t is not None:
                 if t['side'] != side:
                     moves.append(Move(fy=y, fx=x, ty=ny, tx=nx))
-                break # Stop after the second piece (the target)
+                break
             nx += dx
             ny += dy
     return moves
 
 def gen_horse(board, x, y, side):
-    """Generate horse moves"""
     moves = []
-    # Horse leg blocking: the blocker square is halfway (dx//2, dy//2)
     for dx, dy in H8:
         nx, ny = x + dx, y + dy
         if not inside(nx, ny): continue
-
-        # Check horse leg blocking: orthogonal adjacent in primary direction
         if abs(dx) == 2:
             leg_x, leg_y = x + (dx // 2), y
         else:
             leg_x, leg_y = x, y + (dy // 2)
-        if not inside(leg_x, leg_y):
-            continue
-        if board[leg_y][leg_x] is not None:
-            continue
-
+        if not inside(leg_x, leg_y): continue
+        if board[leg_y][leg_x] is not None: continue
         t = board[ny][nx]
         if t is None or t['side'] != side:
             moves.append(Move(fy=y, fx=x, ty=ny, tx=nx))
     return moves
 
 def gen_soldier(board, x, y, side):
-    """Generate soldier moves"""
     moves = []
     forward = 1 if side == 'red' else -1
-    
-    # Move forward
     ny = y + forward
     if inside(x, ny):
         t = board[ny][x]
         if t is None or t['side'] != side:
             moves.append(Move(fy=y, fx=x, ty=ny, tx=x))
-            
-    # Move sideways after crossing river
     river_crossed = (side == 'red' and y >= 5) or (side == 'black' and y <= 4)
     if river_crossed:
         for dx in (-1, 1):
@@ -280,21 +230,15 @@ def gen_soldier(board, x, y, side):
     return moves
 
 def gen_general(board, x, y, side):
-    """Generate general moves"""
     palace = range(3, 6)
     y_range = range(0, 3) if side == 'red' else range(7, 10)
     moves = []
-    
-    # Normal moves
     for dx, dy in D4:
         nx, ny = x + dx, y + dy
         if nx not in palace or ny not in y_range: continue
         t = board[ny][nx]
         if t is None or t['side'] != side:
             moves.append(Move(fy=y, fx=x, ty=ny, tx=nx))
-            
-    # Flying general (capture enemy general in same file) - Note: This capture move is usually illegal 
-    # if it doesn't resolve an existing check, but we generate it and filter later.
     opp = 'red' if side == 'black' else 'black'
     k2 = find_general(board, opp)
     if k2 and k2['x'] == x:
@@ -309,7 +253,6 @@ def gen_general(board, x, y, side):
     return moves
 
 def gen_advisor(board, x, y, side):
-    """Generate advisor moves"""
     palace = range(3, 6)
     y_range = range(0, 3) if side == 'red' else range(7, 10)
     moves = []
@@ -322,30 +265,22 @@ def gen_advisor(board, x, y, side):
     return moves
 
 def gen_elephant(board, x, y, side):
-    """Generate elephant moves"""
     y_limit = 5 if side == 'red' else 4
     moves = []
     for dx, dy in E4:
         nx, ny = x + dx, y + dy
-        
-        # Check river crossing
         if (side == 'red' and ny >= y_limit) or (side == 'black' and ny <= y_limit):
-            pass # Keep it simple, just check the range
+            pass
         else:
             continue
-            
         if not inside(nx, ny): continue
-        
-        # Check elephant eye blocking
         mx, my = x + dx//2, y + dy//2
         if board[my][mx] is not None: continue
-        
         t = board[ny][nx]
         if t is None or t['side'] != side:
             moves.append(Move(fy=y, fx=x, ty=ny, tx=nx))
     return moves
 
-# Move generation map
 GEN_MAP = {
     '車': gen_chariot, '俥': gen_chariot, '车': gen_chariot,
     '炮': gen_cannon, '砲': gen_cannon,
@@ -357,48 +292,37 @@ GEN_MAP = {
 }
 
 def make_move(board, move):
-    """Applies a move and returns the captured piece for unmaking."""
     fy, fx = move.fy, move.fx
     ty, tx = move.ty, move.tx
-    
     captured = board[ty][tx]
-    move.captured = captured # Store captured piece in move object
-    
+    move.captured = captured
     board[ty][tx] = board[fy][fx]
     board[fy][fx] = None
     return captured
 
 def unmake_move(board, move, captured):
-    """Undoes a move."""
     fy, fx = move.fy, move.fx
     ty, tx = move.ty, move.tx
-    
     board[fy][fx] = board[ty][tx]
     board[ty][tx] = captured
-    move.captured = None # Clear captured piece
+    move.captured = None
 
 def generate_moves(board_state, side, tt_best_move=None, depth=0):
-    """Generate all legal moves for a side"""
     pseudo = []
-    for y in range(10):
-        for x in range(9):
+    for y in range(ROWS):
+        for x in range(COLS):
             p = board_state[y][x]
             if p and p['side'] == side:
                 pseudo += GEN_MAP[p['type']](board_state, x, y, side)
 
-    # 如果当前方被将军，只生成应将走法
     if in_check(board_state, side):
         legal = []
         for m in pseudo:
-            # capture the moving piece reference before applying the move
             piece = board_state[m.fy][m.fx]
-            # Defensive: if the from-square is unexpectedly empty, skip this pseudo-move
             if piece is None:
                 continue
             captured = make_move(board_state, m)
-            # 检查走完后是否解除了被将军
             if not in_check(board_state, side):
-                # ...评分部分...
                 score = 0
                 piece_type = piece['type']
                 key = (piece_type, side, m.fy, m.fx, m.ty, m.tx)
@@ -409,8 +333,7 @@ def generate_moves(board_state, side, tt_best_move=None, depth=0):
                     score = 1000000
                     score += victim_value * 100 - aggressor_value
                     if captured['type'] in ('兵', '卒'):
-                        if (captured['type'] == '兵' and m.ty >= 5) or \
-                           (captured['type'] == '卒' and m.ty <= 4):
+                        if (captured['type'] == '兵' and m.ty >= 5) or (captured['type'] == '卒' and m.ty <= 4):
                             score += 50
                 else:
                     old_pst = PST[(piece_type, side)][m.fy][m.fx]
@@ -434,94 +357,58 @@ def generate_moves(board_state, side, tt_best_move=None, depth=0):
                     break
         return legal
 
-    # Filter and score legal moves
     legal = []
-    
     for m in pseudo:
-        # Reference the moving piece before applying the move (make_move clears the from-square)
         piece = board_state[m.fy][m.fx]
-        # Defensive: skip if no piece is found on the from-square
         if piece is None:
             continue
-        # Make move on current board (fast application)
         captured = make_move(board_state, m)
-        
-        # Check legality
         red_king = find_general(board_state, 'red')
         black_king = find_general(board_state, 'black')
-        
         is_legal = True
         if red_king and black_king and kings_facing(board_state, red_king, black_king):
             is_legal = False
         elif in_check(board_state, side):
             is_legal = False
-        
-        # Unmake move
         unmake_move(board_state, m, captured)
-        
         if is_legal:
-            # Score the move (MVV/LVA for captures + PST)
-            # 'piece' was captured above before make_move
-            
             score = 0
-            # 历史启发值基准分
             piece_type = piece['type']
             key = (piece_type, side, m.fy, m.fx, m.ty, m.tx)
             history_score = HISTORY_TABLE.get(key, 0)
-            
-            # MVV-LVA (Most Valuable Victim - Least Valuable Aggressor)
             if captured:
                 victim_value = PIECE_VALUES[captured['type']]
                 aggressor_value = PIECE_VALUES[piece_type]
-                score = 1000000  # 基础分：确保吃子走法优先
-                score += victim_value * 100 - aggressor_value  # MVV-LVA评分
-                
-                # 特殊情况：吃兵时考虑过河因素
+                score = 1000000
+                score += victim_value * 100 - aggressor_value
                 if captured['type'] in ('兵', '卒'):
-                    if (captured['type'] == '兵' and m.ty >= 5) or \
-                       (captured['type'] == '卒' and m.ty <= 4):
-                        score += 50  # 优先吃过河兵
+                    if (captured['type'] == '兵' and m.ty >= 5) or (captured['type'] == '卒' and m.ty <= 4):
+                        score += 50
             else:
-                # 非吃子走法评分
-                # 1. 位置价值变化
                 old_pst = PST[(piece_type, side)][m.fy][m.fx]
                 new_pst = PST[(piece_type, side)][m.ty][m.tx]
                 score += (new_pst - old_pst) * 10
-                
-                # 2. 历史启发
-                score += history_score // 2  # 降低历史表权重，避免过度依赖
-                
-                # 3. 中心控制（针对马、炮、车）
+                score += history_score // 2
                 if piece_type in ('馬', '炮', '車'):
                     center_dist = abs(4 - m.tx) + abs(4 - m.ty)
                     score += (7 - center_dist) * 5
-            
-            # 杀手启发
             km = KILLER_MOVES[depth]
             if m == km[0]: score += 5000
             elif m == km[1]: score += 3000
-            
             m.score = score
             legal.append(m)
-    
-    # Sort by score
     legal.sort(key=lambda x: x.score, reverse=True)
-    
-    # Move TT best move to front
     if tt_best_move:
         for i, m in enumerate(legal):
             if m == tt_best_move:
                 legal.insert(0, legal.pop(i))
                 break
-    
     return legal
 
 def copy_board(board_state):
-    """Create a copy of the board (only used for root search/initial state)"""
     return [row[:] for row in board_state]
 
 def compute_zobrist(board_state, side_to_move):
-    """Compute Zobrist hash"""
     h = 0
     for y in range(ROWS):
         for x in range(COLS):
@@ -533,487 +420,477 @@ def compute_zobrist(board_state, side_to_move):
         h ^= ZOBRIST_SIDE
     return h
 
-# ========= 新版 evaluate_board =========
-def evaluate_board(board_state):
-    """
-    静态评估函数（黑方视角，越大越优）
-    1. 子力 + 位置
-    2. 过河兵深度加权
-    3. 被攻击/保护次数
-    4. 基础协同
-    5. 士象完整 & 将帅安全
-    6. 将军持续威胁
-    """
-    from collections import defaultdict
-
-    # --- 子力、位置、兵深度 ---
-    score = 0
-    red_mob = black_mob = 0
-
-    # --- 威胁统计 ---
-    attacked = defaultdict(int)   # (y,x) 被敌方攻击次数
-    guarded  = defaultdict(int)   # (y,x) 被己方保护次数
-
-    # 先扫描一遍，统计攻击/保护
+# ---------------- Static Exchange Evaluation (SEE) ----------------
+def static_exchange_evaluation(board_state, tx, ty, side):
+    attackers = []
+    defenders = []
     for y in range(ROWS):
         for x in range(COLS):
             p = board_state[y][x]
-            if not p:
-                continue
+            if not p: continue
+            for m in GEN_MAP[p['type']](board_state, x, y, p['side']):
+                if m.tx == tx and m.ty == ty:
+                    item = (PIECE_VALUES.get(p['type'],0), p['type'], y, x)
+                    if p['side']==side: attackers.append(item)
+                    else: defenders.append(item)
+                    break
+    if not attackers: return 0
+    attackers.sort(key=lambda x:x[0])
+    defenders.sort(key=lambda x:x[0])
+    gain = []
+    tgt = board_state[ty][tx]
+    value_on_square = PIECE_VALUES[tgt['type']] if tgt else 0
+    gain.append(value_on_square)
+    a_idx=d_idx=0
+    side_to_move=side
+    while True:
+        if side_to_move==side:
+            if a_idx>=len(attackers): break
+            gain.append(PIECE_VALUES[attackers[a_idx][1]])
+            a_idx+=1
+        else:
+            if d_idx>=len(defenders): break
+            gain.append(PIECE_VALUES[defenders[d_idx][1]])
+            d_idx+=1
+        side_to_move = 'red' if side_to_move=='black' else 'black'
+    for i in range(len(gain)-2,-1,-1):
+        gain[i] = max(-gain[i+1], gain[i])
+    return gain[0]
+
+# ------------------ 分阶段评估（高级版） ------------------
+def evaluate_board(board_state):
+    """
+    分阶段评估（黑方视角，越大越优）
+    包含：子力、PST、机动性、王安全、威胁按价值、兵结构、协同、残局特判
+    """
+    total_material = 0
+    black_material = 0
+    red_material = 0
+
+    attacked = defaultdict(int)
+    guarded = defaultdict(int)
+
+    # 材料统计
+    for y in range(ROWS):
+        for x in range(COLS):
+            p = board_state[y][x]
+            if not p: continue
+            v = PIECE_VALUES.get(p['type'], 0)
+            total_material += v
+            if p['side'] == 'black':
+                black_material += v
+            else:
+                red_material += v
+
+    phase = min(1.0, total_material / 16000.0)
+
+    # 攻击/保护统计 (按价值)
+    for y in range(ROWS):
+        for x in range(COLS):
+            p = board_state[y][x]
+            if not p: continue
             side = p['side']
-            # 用原有 gen_xxx 函数生成“攻击范围”
             att_list = GEN_MAP[p['type']](board_state, x, y, side)
             for m in att_list:
                 tx, ty = m.tx, m.ty
                 tgt = board_state[ty][tx]
-                if tgt is None:               # 空格子 → 保护
-                    guarded[(ty,tx)] += 1 if side == 'black' else -1
-                elif tgt['side'] != side:     # 敌方子 → 攻击
-                    attacked[(ty,tx)] += 1 if side == 'black' else -1
+                if tgt:
+                    val = PIECE_VALUES.get(tgt['type'], 50)
+                    if side == 'black':
+                        attacked[(ty,tx)] += val
+                    else:
+                        attacked[(ty,tx)] -= val
+                else:
+                    if side == 'black':
+                        guarded[(ty,tx)] += 20
+                    else:
+                        guarded[(ty,tx)] -= 20
 
-    # 正式扫描棋子
+    score = 0
+    black_mob = 0
+    red_mob = 0
+
     for y in range(ROWS):
         for x in range(COLS):
             p = board_state[y][x]
-            if not p:
-                continue
+            if not p: continue
             side = p['side']
             mult = 1 if side == 'black' else -1
+            base = PIECE_VALUES.get(p['type'], 0)
 
-            # 1. 子力
-            val = PIECE_VALUES.get(p['type'], 0)
+            # 过河兵奖励
+            if p['type'] in ('卒','兵'):
+                if side == 'black':
+                    base += max(0, 4 - y) * 12
+                else:
+                    base += max(0, y - 5) * 12
 
-            # 2. 过河兵深度
-            if p['type'] in ('兵', '卒'):
-                if side == 'red' and y >= 5:
-                    val += (y - 5) * 10          # 每前进一格 +10
-                elif side == 'black' and y <= 4:
-                    val += (4 - y) * 10
-
-            # 3. 位置分
+            # 位置分
             pst_val = PST[(p['type'], side)][y][x]
 
-            # 4. 威胁分
-            threat = (attacked[(y,x)] - guarded[(y,x)]) * 20
-            val += threat
+            # 威胁
+            threat = attacked[(y,x)] - guarded[(y,x)]
+            base += int(threat * 0.15)
 
-            score += (val + pst_val) * mult
-
-            # 5. 机动性（同原）
-            if p['type'] not in ('帥', '將'):
+            # 机动性
+            if p['type'] not in ('將','帥'):
                 mob = len(GEN_MAP[p['type']](board_state, x, y, side))
-                if side == 'red':
-                    red_mob += mob * 2
+                if side == 'black':
+                    black_mob += mob
                 else:
-                    black_mob += mob * 2
+                    red_mob += mob
 
-    # 机动性汇总
-    score += black_mob - red_mob
+            score += (base + pst_val) * mult
 
-    # 6. 士象完整
-    red_advisor = sum(1 for y in range(ROWS) for x in range(COLS)
-                      if (q := board_state[y][x]) and q['side'] == 'red' and q['type'] == '仕')
-    red_elephant = sum(1 for y in range(ROWS) for x in range(COLS)
-                       if (q := board_state[y][x]) and q['side'] == 'red' and q['type'] == '相')
-    black_advisor = sum(1 for y in range(ROWS) for x in range(COLS)
-                        if (q := board_state[y][x]) and q['side'] == 'black' and q['type'] == '士')
-    black_elephant = sum(1 for y in range(ROWS) for x in range(COLS)
-                         if (q := board_state[y][x]) and q['side'] == 'black' and q['type'] == '象')
+    score += int((black_mob - red_mob) * (10 * (0.6 + 0.4 * phase)))
 
-    score -= (2 - red_advisor) * 50
-    score -= (2 - red_elephant) * 30
-    score += (2 - black_advisor) * 50
-    score += (2 - black_elephant) * 30
+    # 王安全
+    def king_safety_score(side):
+        k = find_general(board_state, side)
+        if not k:
+            return -2000 if side=='black' else 2000
+        kx, ky = k['x'], k['y']
+        if side == 'black':
+            rng = range(7,10)
+            sign = 1
+        else:
+            rng = range(0,3)
+            sign = -1
+        palace_attack = 0
+        for yy in rng:
+            for xx in range(3,6):
+                palace_attack += attacked[(yy,xx)]
+        advisors = sum(1 for yy in range(ROWS) for xx in range(COLS)
+                       if (q:=board_state[yy][xx]) and q['side']==side and q['type'] in ('士','仕'))
+        elephants = sum(1 for yy in range(ROWS) for xx in range(COLS)
+                        if (q:=board_state[yy][xx]) and q['side']==side and q['type'] in ('象','相'))
+        shield = advisors + elephants
+        val = palace_attack * 18 - (2 - shield) * 60
+        center_attack = attacked[(ky, kx)]
+        val += center_attack * 25
+        return val * sign
 
-    # 7. 将帅安全（被困）
-    red_king = find_general(board_state, 'red')
-    black_king = find_general(board_state, 'black')
-    if red_king:
-        kx, ky = red_king['x'], red_king['y']
-        # 九宫格内被攻击次数
-        palace_att = sum(attacked[(y, x)] for y in range(0, 3) for x in range(3, 6)
-                         if 0 <= y < ROWS and 0 <= x < COLS)
-        score += palace_att * 25      # 红方被攻击，黑方加分
+    score += king_safety_score('black')
+    score += king_safety_score('red')
 
-    if black_king:
-        kx, ky = black_king['x'], black_king['y']
-        palace_att = sum(attacked[(y, x)] for y in range(7, 10) for x in range(3, 6)
-                         if 0 <= y < ROWS and 0 <= x < COLS)
-        score -= palace_att * 25      # 黑方被攻击，黑方减分
+    # 协同: 双车同线
+    def rook_bonus(side):
+        rooks = [(y,x) for y in range(ROWS) for x in range(COLS)
+                 if (q:=board_state[y][x]) and q['side']==side and q['type'] in ('車','车')]
+        if len(rooks) >= 2:
+            if rooks[0][0] == rooks[1][0] or rooks[0][1] == rooks[1][1]:
+                return 120 if side=='black' else -120
+        return 0
+    score += rook_bonus('black')
+    score += rook_bonus('red')
 
-    # 8. 协同分（如双车、炮架马、连兵等）
-    # 双车同线加分
-    black_rooks = [(y, x) for y in range(ROWS) for x in range(COLS)
-                   if (q := board_state[y][x]) and q['side'] == 'black' and q['type'] in ('車', '车')]
-    if len(black_rooks) == 2:
-        if black_rooks[0][0] == black_rooks[1][0] or black_rooks[0][1] == black_rooks[1][1]:
-            score += 60  # 双车同线
-    red_rooks = [(y, x) for y in range(ROWS) for x in range(COLS)
-                 if (q := board_state[y][x]) and q['side'] == 'red' and q['type'] in ('車', '车')]
-    if len(red_rooks) == 2:
-        if red_rooks[0][0] == red_rooks[1][0] or red_rooks[0][1] == red_rooks[1][1]:
-            score -= 60
-    # 炮架马（炮与马相邻）
-    for y in range(ROWS):
-        for x in range(COLS):
-            p = board_state[y][x]
-            if p and p['side'] == 'black' and p['type'] in ('炮', '砲'):
-                for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
-                    nx, ny = x+dx, y+dy
-                    if 0<=nx<COLS and 0<=ny<ROWS:
-                        q = board_state[ny][nx]
-                        if q and q['side']=='black' and q['type'] in ('馬','马'):
-                            score += 40
-            if p and p['side'] == 'red' and p['type'] in ('炮', '砲'):
-                for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
-                    nx, ny = x+dx, y+dy
-                    if 0<=nx<COLS and 0<=ny<ROWS:
-                        q = board_state[ny][nx]
-                        if q and q['side']=='red' and q['type'] in ('馬','马'):
-                            score -= 40
-    # 连兵（黑方）
-    black_soldiers = [(y, x) for y in range(ROWS) for x in range(COLS)
-                      if (q := board_state[y][x]) and q['side'] == 'black' and q['type'] == '卒']
-    for y, x in black_soldiers:
-        for dx in [-1, 1]:
-            nx = x + dx
-            if 0 <= nx < COLS and board_state[y][nx] and board_state[y][nx]['side'] == 'black' and board_state[y][nx]['type'] == '卒':
-                score += 15
-    # 连兵（红方）
-    red_soldiers = [(y, x) for y in range(ROWS) for x in range(COLS)
-                    if (q := board_state[y][x]) and q['side'] == 'red' and q['type'] == '兵']
-    for y, x in red_soldiers:
-        for dx in [-1, 1]:
-            nx = x + dx
-            if 0 <= nx < COLS and board_state[y][nx] and board_state[y][nx]['side'] == 'red' and board_state[y][nx]['type'] == '兵':
-                score -= 15
-    # 残局特征：单兵胜车
-    if sum(1 for y in range(ROWS) for x in range(COLS)
-           if (q := board_state[y][x]) and q['side'] == 'black' and q['type'] == '卒') == 1 and \
-       sum(1 for y in range(ROWS) for x in range(COLS)
-           if (q := board_state[y][x]) and q['side'] == 'red' and q['type'] in ('車','车')) == 1:
-        score += 80  # 黑方单兵胜车
-    if sum(1 for y in range(ROWS) for x in range(COLS)
-           if (q := board_state[y][x]) and q['side'] == 'red' and q['type'] == '兵') == 1 and \
-       sum(1 for y in range(ROWS) for x in range(COLS)
-           if (q := board_state[y][x]) and q['side'] == 'black' and q['type'] in ('車','车')) == 1:
-        score -= 80  # 红方单兵胜车
+    # 炮架马
+    def cannon_horse_bonus(side):
+        bonus = 0
+        for y in range(ROWS):
+            for x in range(COLS):
+                p = board_state[y][x]
+                if not p or p['side'] != side: continue
+                if p['type'] in ('炮','砲'):
+                    for dx,dy in [(-1,0),(1,0),(0,-1),(0,1)]:
+                        nx, ny = x+dx, y+dy
+                        if 0<=nx<COLS and 0<=ny<ROWS:
+                            q = board_state[ny][nx]
+                            if q and q['side']==side and q['type'] in ('馬','马'):
+                                bonus += 60 if side=='black' else -60
+        return bonus
+    score += cannon_horse_bonus('black')
+    score += cannon_horse_bonus('red')
 
-    # 8. 将军持续威胁（非简单将军惩罚）
-    if in_check(board_state, 'red'):
-        score += 200
-    if in_check(board_state, 'black'):
-        score -= 200
+    # 兵结构
+    def pawn_structure(side, piece_type):
+        bonus = 0
+        pawns = [(y,x) for y in range(ROWS) for x in range(COLS)
+                 if (q:=board_state[y][x]) and q['side']==side and q['type']==piece_type]
+        for (y,x) in pawns:
+            for dx in (-1,1):
+                nx = x+dx
+                if 0<=nx<COLS and board_state[y][nx] and board_state[y][nx]['side']==side and board_state[y][nx]['type']==piece_type:
+                    bonus += 30 if side=='black' else -30
+            left = (0<=x-1<COLS and board_state[y][x-1] and board_state[y][x-1]['side']==side and board_state[y][x-1]['type']==piece_type)
+            right = (0<=x+1<COLS and board_state[y][x+1] and board_state[y][x+1]['side']==side and board_state[y][x+1]['type']==piece_type)
+            if not left and not right:
+                bonus -= 18 if side=='black' else -18
+        return bonus
+    score += pawn_structure('black','卒')
+    score += pawn_structure('red','兵')
+
+    # 残局特判
+    def count(side, types):
+        return sum(1 for y in range(ROWS) for x in range(COLS)
+                   if (q:=board_state[y][x]) and q['side']==side and q['type'] in types)
+    bp = count('black',['卒'])
+    rp = count('red',['兵'])
+    br = count('black',['車','车'])
+    rr = count('red',['車','车'])
+    bc = count('black',['炮','砲'])
+    rc = count('red',['炮','砲'])
+    bh = count('black',['馬','马'])
+    rh = count('red',['馬','马'])
+
+    if bp == 1 and br == 1 and (bc+bh)==0 and (rr+rc+rh+rp)==1:
+        score += 140
+    if rp == 1 and rr == 1 and (rc+rh)==0 and (br+bc+bh+bp)==1:
+        score -= 140
+
+    if bp >= 1 and bc >= 1 and rh == 1 and rr == 0:
+        score += 90
+    if rp >= 1 and rc >= 1 and bh == 1 and br == 0:
+        score -= 90
+
+    if bc == 2 and rh == 1 and (rr+rp+rc)==0:
+        score += 110
+    if rc == 2 and bh == 1 and (br+bp+bc)==0:
+        score -= 110
+
+    if br >= 2 and (rr+rh+rc) <= 1:
+        score += 180
+    if rr >= 2 and (br+bh+bc) <= 1:
+        score -= 180
+
+    if count('black',['將'])==1 and count('black',['士','象'])==0:
+        score -= 300
+    if count('red',['帥'])==1 and count('red',['仕','相'])==0:
+        score += 300
 
     return score
 
-def is_forcing_move(move, board_state):
-    """Check if move is forcing (capture or check)"""
-    if board_state[move.ty][move.tx] is not None:
-        return True
-    
-    # Fast check for check after move
-    # Note: A full check requires applying/unapplying the move, which is done in quiescence
-    # This is a good place for simple *pre-check* heuristics, but for full accuracy, we proceed to Q-search.
-    return False
+# ----------------- Quiescence with SEE filter -----------------
+def quiescence(board_state, alpha, beta, side_to_move, color_multiplier, start_time=None, time_limit=None):
+    if start_time and time_limit and (time.time() - start_time) > time_limit:
+        raise TimeoutError
 
-def quiescence(board_state, alpha, beta, side_to_move, color_multiplier):
-    """Quiescence search for captures and checks (Black always maximizing from their perspective)"""
-    stand_pat = evaluate_board(board_state) * color_multiplier # Current score from the perspective of the *current* player
-    
+    stand_pat = evaluate_board(board_state) * color_multiplier
     if stand_pat >= beta:
         return beta
     if stand_pat > alpha:
         alpha = stand_pat
-    
+
     moves = generate_moves(board_state, side_to_move)
-    forcing_moves = [m for m in moves if is_forcing_move(m, board_state)]
-    forcing_moves.sort(key=lambda m: m.score, reverse=True)
-    
-    for m in forcing_moves:
+    forcing = []
+    for m in moves:
+        if board_state[m.ty][m.tx] is not None:
+            see = static_exchange_evaluation(board_state, m.tx, m.ty, side_to_move)
+            # keep capture if SEE + aggressor_value >= 0 (conservative)
+            if see + PIECE_VALUES.get(board_state[m.fy][m.fx]['type'], 0) >= 0:
+                forcing.append(m)
+        else:
+            captured = make_move(board_state, m)
+            is_chk = in_check(board_state, 'red' if side_to_move=='black' else 'black')
+            unmake_move(board_state, m, captured)
+            if is_chk:
+                forcing.append(m)
+
+    forcing.sort(key=lambda m: (PIECE_VALUES.get(board_state[m.ty][m.tx]['type'], 0) if board_state[m.ty][m.tx] else 0), reverse=True)
+
+    for m in forcing:
         captured = make_move(board_state, m)
-        
-        # Check legality after move (only for general facing and check)
         red_king = find_general(board_state, 'red')
         black_king = find_general(board_state, 'black')
-        
         if red_king and black_king and kings_facing(board_state, red_king, black_king):
             unmake_move(board_state, m, captured)
             continue
         if in_check(board_state, side_to_move):
             unmake_move(board_state, m, captured)
             continue
-            
-        val = -quiescence(board_state, -beta, -alpha, 'red' if side_to_move == 'black' else 'black', -color_multiplier)
-        
+
+        val = -quiescence(board_state, -beta, -alpha, 'red' if side_to_move=='black' else 'black', -color_multiplier, start_time, time_limit)
         unmake_move(board_state, m, captured)
-        
+
         if val >= beta:
             return beta
         if val > alpha:
             alpha = val
-                
     return alpha
 
-def negamax(board_state, depth, alpha, beta, side_to_move, color_multiplier, current_depth, start_time=None, time_limit=None):
-    """Negamax search with alpha-beta pruning"""
+# ----------------- PVS with extensions -----------------
+def pvs_search(board_state, depth, alpha, beta, side_to_move, color_multiplier, current_depth=0, start_time=None, time_limit=None):
     if start_time and time_limit and (time.time() - start_time) > time_limit:
         raise TimeoutError
-    
-    if depth == 0:
-        return quiescence(board_state, alpha, beta, side_to_move, color_multiplier)
-    
-    # Transposition table lookup
+
     zob = compute_zobrist(board_state, side_to_move)
     tt_entry = TT.get(zob)
-    
     if tt_entry and tt_entry['depth'] >= depth:
-        flag = tt_entry['flag']
-        val = tt_entry['value']
-        
-        # Adjust value from TT to current player's perspective
-        tt_val = val * color_multiplier
-        
-        if flag == 'EXACT': return tt_val
-        if flag == 'LOWER' and tt_val > alpha: alpha = tt_val
-        if flag == 'UPPER' and tt_val < beta: beta = tt_val
-        if alpha >= beta: return tt_val
-    
-    # Null Move Pruning
+        entry_val = tt_entry['value']
+        entry_flag = tt_entry['flag']
+        tt_val = entry_val * color_multiplier
+        if entry_flag == 'EXACT':
+            return tt_val
+        if entry_flag == 'LOWER' and tt_val > alpha:
+            alpha = tt_val
+        if entry_flag == 'UPPER' and tt_val < beta:
+            beta = tt_val
+        if alpha >= beta:
+            return tt_val
+
+    if depth <= 0:
+        return quiescence(board_state, alpha, beta, side_to_move, color_multiplier, start_time, time_limit)
+
     if depth >= 3 and not in_check(board_state, side_to_move):
-        R = 2 if depth > 4 else 1
-        # Make null move (skip turn)
-        null_zob = compute_zobrist(board_state, 'red' if side_to_move == 'black' else 'black')
-        null_val = -negamax(board_state, depth - 1 - R, -beta, -beta + 1,
-                           'red' if side_to_move == 'black' else 'black',
-                           -color_multiplier, current_depth + 1, start_time, time_limit)
-        if null_val >= beta:
-            return beta
+        R = 2
+        try:
+            val = -pvs_search(board_state, depth - 1 - R, -beta, -beta + 1, 'red' if side_to_move=='black' else 'black', -color_multiplier, current_depth+1, start_time, time_limit)
+            if val >= beta:
+                return beta
+        except TimeoutError:
+            pass
 
-    # Move generation
-    tt_best_move = tt_entry.get('best_move') if tt_entry else None
-    moves = generate_moves(board_state, side_to_move, tt_best_move, current_depth)
-
-    best_val = -MATE_SCORE - 1 # Sentinel value
-    best_move = None
-
+    moves = generate_moves(board_state, side_to_move, tt_entry.get('best_move') if tt_entry else None, current_depth)
     if not moves:
-        # Checkmate or Stalemate
         if in_check(board_state, side_to_move):
-            return -MATE_SCORE + current_depth # Checkmate (current player loses)
-        return 0 # Stalemate
-    
-    original_alpha = alpha
+            return -MATE_SCORE + current_depth
+        return 0
+
+    best_val = -MATE_SCORE - 1
+    best_move = None
+    first = True
 
     for i, m in enumerate(moves):
-        # Late Move Reductions (LMR)
-        reduction = 0
-        if depth >= 3 and i > 2 and not in_check(board_state, side_to_move):
-            reduction = 1
-        # Apply move
+        # extensions
+        ext = 0
+        captured_piece = board_state[m.ty][m.tx]
+        if captured_piece is not None:
+            victim_val = PIECE_VALUES.get(captured_piece['type'], 0)
+            if victim_val >= 800:
+                ext = 1
+
+        # check extension
         captured = make_move(board_state, m)
+        gives_check = in_check(board_state, 'red' if side_to_move=='black' else 'black')
+        unmake_move(board_state, m, captured)
+        if gives_check:
+            ext = max(ext, 1)
+
         try:
-            if reduction:
-                val = -negamax(board_state, depth-1-reduction, -beta, -alpha,
-                               'red' if side_to_move == 'black' else 'black',
-                               -color_multiplier, current_depth + 1, start_time, time_limit)
-                # Re-search if reduced node produces a cutoff
-                if val > alpha:
-                    val = -negamax(board_state, depth-1, -beta, -alpha,
-                                   'red' if side_to_move == 'black' else 'black',
-                                   -color_multiplier, current_depth + 1, start_time, time_limit)
+            captured = make_move(board_state, m)
+            if first:
+                val = -pvs_search(board_state, depth-1+ext, -beta, -alpha, 'red' if side_to_move=='black' else 'black', -color_multiplier, current_depth+1, start_time, time_limit)
             else:
-                val = -negamax(board_state, depth-1, -beta, -alpha,
-                               'red' if side_to_move == 'black' else 'black',
-                               -color_multiplier, current_depth + 1, start_time, time_limit)
+                val = -pvs_search(board_state, depth-1+ext, -alpha-1, -alpha, 'red' if side_to_move=='black' else 'black', -color_multiplier, current_depth+1, start_time, time_limit)
+                if alpha < val < beta:
+                    val = -pvs_search(board_state, depth-1+ext, -beta, -alpha, 'red' if side_to_move=='black' else 'black', -color_multiplier, current_depth+1, start_time, time_limit)
+            unmake_move(board_state, m, captured)
         except TimeoutError:
             unmake_move(board_state, m, captured)
             raise
-        
-        # Unmake move
-        unmake_move(board_state, m, captured)
-        
-        # Update best value and move
+
         if val > best_val:
             best_val = val
             best_move = m
-            
-        alpha = max(alpha, best_val)
-            
-        # Beta cutoff
+
+        if val > alpha:
+            alpha = val
+
         if alpha >= beta:
-            # Store killer move (non-capture only)
-            if captured is None:
+            if board_state[m.ty][m.tx] is None:
                 km = KILLER_MOVES[current_depth]
                 if m != km[0]:
                     km[1] = km[0]
                     km[0] = m
-                
-                # Update history heuristic (for non-capture moves that caused cutoff)
-                piece_type = board_state[m.fy][m.fx]['type']
-                key = (piece_type, side_to_move, m.fy, m.fx, m.ty, m.tx)
-                HISTORY_TABLE[key] += depth * depth 
-                HISTORY_TABLE[key] = min(HISTORY_TABLE[key], MAX_HISTORY_SCORE)
-            
+                piece_type = board_state[m.fy][m.fx]['type'] if board_state[m.fy][m.fx] else None
+                if piece_type:
+                    key = (piece_type, side_to_move, m.fy, m.fx, m.ty, m.tx)
+                    HISTORY_TABLE[key] += depth * depth
+                    HISTORY_TABLE[key] = min(HISTORY_TABLE[key], MAX_HISTORY_SCORE)
             break
-    
-    # Store in transposition table (store from Black's perspective, always maximizing)
-    tt_val_black_perspective = best_val * color_multiplier 
-    
+
+        first = False
+
+    tt_val_black_perspective = best_val * color_multiplier
     flag = 'EXACT'
-    if best_val <= original_alpha:
+    if best_val <= alpha:
         flag = 'UPPER'
     elif best_val >= beta:
         flag = 'LOWER'
-            
     TT[zob] = {'value': tt_val_black_perspective, 'depth': depth, 'flag': flag, 'best_move': best_move}
     return best_val
 
+# ----------------- Root Iterative Deepening using PVS -----------------
 def minimax_root(board_state, side, time_limit=TIME_LIMIT):
-    """Root search with iterative deepening"""
-    log(f"[搜索] 开始搜索，执棋方: {side}")
-    
-    # Opening book
-    log(f"[搜索] 查询开局库...")
+    log(f"[搜索] Root PVS 开始，执棋方: {side}")
     move = get_opening_move(board_state, side)
     if move:
-        log(f"[搜索] 开局库命中，返回走法: {move}")
+        log("[搜索] 开局库命中，直接返回开局走法")
         return move
-    else:
-        log(f"[搜索] 开局库未命中，开始搜索引擎")
-    
+
     moves = generate_moves(board_state, side)
-    if not moves: return None
-    
+    if not moves:
+        return None
+
     start_time = time.time()
-    best_move_so_far = moves[0]
-    best_val_so_far = -MATE_SCORE - 1
-    research_count = 0
-    
+    best_move = moves[0]
+    best_val = -MATE_SCORE - 1
     color_multiplier = 1 if side == 'black' else -1
-    
-    # Iterative deepening
+
     for depth in range(1, MAX_DEPTH + 1):
-        # 时间管理：检查剩余时间
         time_spent = time.time() - start_time
-        time_left = time_limit - time_spent
-        if time_left < MIN_TIME_LEFT:
-            log(f"剩余时间不足 ({time_left:.2f}s)，停止搜索")
+        if time_spent > time_limit * 0.98:
             break
-            
-        log(f"Starting ID search for depth {depth}...")
-        
-        # 第一层使用更大的初始窗口
-        if depth == 1:
-            alpha = -INITIAL_WINDOW
-            beta = INITIAL_WINDOW
-        else:
-            # 后续层级使用渐进窗口
-            alpha = best_val_so_far - ASPIRATION_WINDOW_DELTA
-            beta = best_val_so_far + ASPIRATION_WINDOW_DELTA
-        
-        # TT best move ordering is handled inside generate_moves
-        
-        # Main search loop with re-search for aspiration window failure
-        used_full_window = False  # ensure we only expand to full window once per depth
-        while True:
-            try:
-                original_alpha = alpha
-                original_beta = beta
-                
-                # Recalculate move list with updated scores/ordering for new search
-                moves = generate_moves(board_state, side, tt_best_move=best_move_so_far, depth=0)
-                
-                # Initialize best move/value for this depth
-                current_best_val = -MATE_SCORE - 1 
-                current_best_move = None
-                
-                for m in moves:
-                    captured = make_move(board_state, m)
-                    
-                    val = -negamax(board_state, depth-1, -beta, -alpha, 
-                                   'red' if side == 'black' else 'black', 
-                                   -color_multiplier, 1, start_time, time_limit * 0.95) # Allocate 95% of time
-                    
+
+        try:
+            current_best_val = -MATE_SCORE - 1
+            current_best_move = None
+            alpha = -MATE_SCORE
+            beta = MATE_SCORE
+
+            zob = compute_zobrist(board_state, side)
+            tt_entry = TT.get(zob)
+            tt_best_move = tt_entry.get('best_move') if tt_entry else None
+            moves = generate_moves(board_state, side, tt_best_move, depth=0)
+
+            for m in moves:
+                captured = make_move(board_state, m)
+                try:
+                    val = -pvs_search(board_state, depth-1, -beta, -alpha, 'red' if side=='black' else 'black', -color_multiplier, 1, start_time, time_limit * 0.95)
+                except TimeoutError:
                     unmake_move(board_state, m, captured)
-                    
-                    if val > current_best_val:
-                        current_best_val = val
-                        current_best_move = m
-                    
-                    alpha = max(alpha, current_best_val)
-                    if alpha >= beta: break # Fail-soft cutoff
-                
-                final_val = current_best_val
-                
-                # Check for aspiration window failure and re-search
-                if final_val >= original_beta:
-                    research_count += 1
-                    if research_count >= MAX_RESEARCH_COUNT:
-                        if not used_full_window:
-                            log(f"Depth {depth}: 达到最大重搜次数，使用全窗口")
-                            # Use true full window once
-                            alpha = -MATE_SCORE
-                            beta = MATE_SCORE
-                            used_full_window = True
-                            continue
-                        # Already used full window, stop re-searching to avoid repeated logs
-                        break
-                    else:
-                        window_size = ASPIRATION_WINDOW_DELTA * (2 ** research_count)
-                        log(f"Depth {depth}: Fail High. Re-search with wider window {window_size}")
-                        alpha = final_val
-                        beta = min(final_val + window_size, MATE_SCORE)
-                    continue
-                elif final_val <= original_alpha:
-                    research_count += 1
-                    if research_count >= MAX_RESEARCH_COUNT:
-                        if not used_full_window:
-                            log(f"Depth {depth}: 达到最大重搜次数，使用全窗口")
-                            # Use true full window once
-                            alpha = -MATE_SCORE
-                            beta = MATE_SCORE
-                            used_full_window = True
-                            continue
-                        # Already used full window, stop re-searching to avoid repeated logs
-                        break
-                    else:
-                        window_size = ASPIRATION_WINDOW_DELTA * (2 ** research_count)
-                        log(f"Depth {depth}: Fail Low. Re-search with wider window {window_size}")
-                        alpha = max(final_val - window_size, -MATE_SCORE)
-                        beta = final_val
-                    continue
-                        
-                break # Aspiration window successful
-                
-            except TimeoutError:
-                log(f"Timeout at depth {depth}. Returning best move from last completed depth.")
-                return best_move_so_far.to_dict()
-        
-        # Successful depth completion
-        best_val_so_far = final_val
-        best_move_so_far = current_best_move
-        log(f"Depth {depth} completed. Best Score (current player): {best_val_so_far}. Best Move: {best_move_so_far.to_dict()}")
-        
-        # Time check
-        if time.time() - start_time > time_limit * 0.95:
-            log(f"Time limit reached after completing depth {depth}. Stopping ID.")
+                    raise
+                unmake_move(board_state, m, captured)
+
+                if val > current_best_val:
+                    current_best_val = val
+                    current_best_move = m
+
+                alpha = max(alpha, current_best_val)
+                if alpha >= beta:
+                    break
+
+            if current_best_move:
+                best_move = current_best_move
+                best_val = current_best_val
+                log(f"[搜索] 深度 {depth} 完成，最佳估值: {best_val}，最佳走法: {best_move.to_dict() if best_move else None}")
+
+            if time.time() - start_time > time_limit * 0.95:
+                break
+
+        except TimeoutError:
+            log(f"[搜索] 超时，在深度 {depth} 中断，返回上次最佳走法")
             break
-            
-    return best_move_so_far.to_dict()
+
+    return best_move.to_dict()
 
 def check_game_over(board_state):
-    """Check if game is over"""
     red_general = find_general(board_state, 'red')
     black_general = find_general(board_state, 'black')
     if not red_general:
         log("[游戏] 游戏结束：黑方胜利！")
-        from opening_book import print_opening_stats
-        print_opening_stats()
+        try:
+            from opening_book import print_opening_stats
+            print_opening_stats()
+        except Exception:
+            pass
         return {'game_over': True, 'message': '黑方胜利！'}
     if not black_general:
         log("[游戏] 游戏结束：红方胜利！")
-        from opening_book import print_opening_stats
-        print_opening_stats()
+        try:
+            from opening_book import print_opening_stats
+            print_opening_stats()
+        except Exception:
+            pass
         return {'game_over': True, 'message': '红方胜利！'}
     return {'game_over': False, 'message': ''}

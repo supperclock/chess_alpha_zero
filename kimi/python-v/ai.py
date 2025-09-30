@@ -14,9 +14,6 @@ from opening_book import get_opening_move, Move
 # --- Configuration ---
 MAX_DEPTH = 10
 TIME_LIMIT = 100.0
-INITIAL_WINDOW = 800
-ASPIRATION_WINDOW_DELTA = 300
-MAX_RESEARCH_COUNT = 3
 MIN_TIME_LEFT = 0.5
 
 logging.basicConfig(
@@ -86,7 +83,8 @@ for p in PIECES:
 ZOBRIST_SIDE = random.getrandbits(64)
 
 # Tables
-TT = {}
+from tt_cache import TTCacher
+TT = TTCacher("tt_cache.sqlite")
 KILLER_MOVES = defaultdict(lambda: [None, None])
 HISTORY_TABLE = defaultdict(lambda: 0)
 
@@ -807,16 +805,17 @@ def pvs_search(board_state, depth, alpha, beta, side_to_move, color_multiplier, 
         flag = 'UPPER'
     elif best_val >= beta:
         flag = 'LOWER'
-    TT[zob] = {'value': tt_val_black_perspective, 'depth': depth, 'flag': flag, 'best_move': best_move}
+    # TT[zob] = {'value': tt_val_black_perspective, 'depth': depth, 'flag': flag, 'best_move': best_move}
+    TT.put(zob, tt_val_black_perspective, depth, flag, best_move)
     return best_val
 
 # ----------------- Root Iterative Deepening using PVS -----------------
 def minimax_root(board_state, side, time_limit=TIME_LIMIT):
     log(f"[搜索] Root PVS 开始，执棋方: {side}")
-    move = get_opening_move(board_state, side)
-    if move:
-        log("[搜索] 开局库命中，直接返回开局走法")
-        return move
+    # move = get_opening_move(board_state, side)
+    # if move:
+    #     log("[搜索] 开局库命中，直接返回开局走法")
+    #     return move
 
     moves = generate_moves(board_state, side)
     if not moves:

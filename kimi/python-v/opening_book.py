@@ -68,8 +68,11 @@ def find_from_position(current_board, side_to_move):
     # ''', (str(board_state),))
     cursor.execute('''
         SELECT best_move FROM ttxq_positions
-        WHERE zobrist = ? order by visits desc
-    ''', (str(board_state),))
+        WHERE zobrist = ? 
+        union
+        select best_move from positions
+        where zobrist = ? 
+    ''', (str(board_state),str(board_state),))
     rows = cursor.fetchone()
     if not rows:
         return None

@@ -11,7 +11,7 @@ from opening_book import find_from_position, Move
 from util import *
 
 # --- Configuration ---
-MAX_DEPTH = 3
+MAX_DEPTH = 2
 TIME_LIMIT = 100.0
 MIN_TIME_LEFT = 0.5
 
@@ -444,8 +444,10 @@ def evaluate_board(board_state):
     black_material = 0
     red_material = 0
 
-    attacked = defaultdict(int)
-    guarded = defaultdict(int)
+    # --- MODIFIED: 升级攻击信息统计 ---
+    # attack_info 记录每个格子受到的攻击者信息
+    # 格式: {(y, x): [{'value': piece_value, 'side': piece_side}, ...]}
+    attack_info = defaultdict(list)
 
     # 材料统计
     for y in range(ROWS):
@@ -461,7 +463,7 @@ def evaluate_board(board_state):
 
     phase = min(1.0, total_material / 16000.0)
 
-    # 攻击/保护统计 (按价值)
+    # 填充攻击信息
     for y in range(ROWS):
         for x in range(COLS):
             p = board_state[y][x]
@@ -469,23 +471,14 @@ def evaluate_board(board_state):
             side = p['side']
             att_list = GEN_MAP[p['type']](board_state, x, y, side)
             for m in att_list:
-                tx, ty = m.tx, m.ty
-                tgt = board_state[ty][tx]
-                if tgt:
-                    val = PIECE_VALUES.get(tgt['type'], 50)
-                    if side == 'black':
-                        attacked[(ty,tx)] += val
-                    else:
-                        attacked[(ty,tx)] -= val
-                else:
-                    if side == 'black':
-                        guarded[(ty,tx)] += 20
-                    else:
-                        guarded[(ty,tx)] -= 20
+                attack_info[(m.ty, m.tx)].append({'value': PIECE_VALUES.get(p['type'], 0), 'side': side})
+
 
     score = 0
     black_mob = 0
     red_mob = 0
+    # --- NEW: 用于累加棋子安全度罚分 ---
+    safety_penalty = 0
 
     for y in range(ROWS):
         for x in range(COLS):
@@ -494,6 +487,7 @@ def evaluate_board(board_state):
             side = p['side']
             mult = 1 if side == 'black' else -1
             base = PIECE_VALUES.get(p['type'], 0)
+            piece_val = base # 保存原始子力价值，用于安全度计算
 
             # 过河兵奖励
             if p['type'] in ('卒','兵'):
@@ -505,9 +499,27 @@ def evaluate_board(board_state):
             # 位置分
             pst_val = PST[(p['type'], side)][y][x]
 
-            # 威胁
-            threat = attacked[(y,x)] - guarded[(y,x)]
-            base += int(threat * 0.15)
+            # --- MODIFIED: 降低单纯威胁权重 ---
+            # 计算该位置的净威胁值
+            net_threat = sum(atk['value'] for atk in attack_info[(y,x)] if atk['side'] == 'black') - \
+                         sum(atk['value'] for atk in attack_info[(y,x)] if atk['side'] == 'red')
+            # 权重从 0.15 降低到 0.08
+            base += int(net_threat * 0.08 * mult) 
+            
+            # --- NEW SECTION: PIECE SAFETY EVALUATION ---
+            # 检查当前棋子是否受到对方低价值棋子的攻击
+            attackers = [atk for atk in attack_info[(y, x)] if atk['side'] != side]
+            if attackers:
+                # 找到价值最低的攻击者
+                min_attacker_val = min(atk['value'] for atk in attackers)
+
+                # 如果被一个价值更低的棋子攻击，施加惩罚
+                if min_attacker_val < piece_val:
+                    # 罚分正比于被攻击棋子自身的价值，例如其价值的40%
+                    # 这意味着一个车被兵攻击，比一个马被兵攻击，罚分要高得多
+                    penalty = int(piece_val * 0.4) 
+                    safety_penalty += penalty * mult # 黑子受罚，总分降低；红子受罚，总分升高
+            # --- PIECE SAFETY EVALUATION END ---
 
             # 机动性
             if p['type'] not in ('將','帥'):
@@ -519,6 +531,9 @@ def evaluate_board(board_state):
 
             score += (base + pst_val) * mult
 
+    # 将安全度罚分计入总分
+    score -= safety_penalty # 从黑方视角看，罚分越高，总分越低
+
     score += int((black_mob - red_mob) * (10 * (0.6 + 0.4 * phase)))
 
     # 王安全
@@ -527,25 +542,31 @@ def evaluate_board(board_state):
         if not k:
             return -2000 if side=='black' else 2000
         kx, ky = k['x'], k['y']
-        if side == 'black':
-            rng = range(7,10)
-            sign = 1
-        else:
-            rng = range(0,3)
-            sign = -1
-        palace_attack = 0
-        for yy in rng:
-            for xx in range(3,6):
-                palace_attack += attacked[(yy,xx)]
-        advisors = sum(1 for yy in range(ROWS) for xx in range(COLS)
-                       if (q:=board_state[yy][xx]) and q['side']==side and q['type'] in ('士','仕'))
-        elephants = sum(1 for yy in range(ROWS) for xx in range(COLS)
-                        if (q:=board_state[yy][xx]) and q['side']==side and q['type'] in ('象','相'))
+        palace_attack_val = 0
+        y_range = range(7, 10) if side == 'black' else range(0, 3)
+        
+        for yy in y_range:
+            for xx in range(3, 6):
+                # 计算九宫内每个点受到的对方攻击总价值
+                for attacker in attack_info.get((yy, xx), []):
+                    if attacker['side'] != side:
+                        palace_attack_val += attacker['value']
+        
+        advisors = sum(1 for r in range(ROWS) for c in range(COLS) if (q:=board_state[r][c]) and q['side']==side and q['type'] in ('士','仕'))
+        elephants = sum(1 for r in range(ROWS) for c in range(COLS) if (q:=board_state[r][c]) and q['side']==side and q['type'] in ('象','相'))
         shield = advisors + elephants
-        val = palace_attack * 18 - (2 - shield) * 60
-        center_attack = attacked[(ky, kx)]
-        val += center_attack * 25
-        return val * sign
+
+        # 惩罚系数可以调整，这里用攻击方棋子价值的 1/20 作为基础惩罚
+        val = (palace_attack_val // 20) * 18 - (2 - shield) * 60
+        
+        center_attack_val = 0
+        for attacker in attack_info.get((ky, kx), []):
+            if attacker['side'] != side:
+                center_attack_val += attacker['value']
+
+        val += (center_attack_val // 20) * 25
+        
+        return val if side == 'black' else -val
 
     score += king_safety_score('black')
     score += king_safety_score('red')
@@ -694,7 +715,29 @@ def pvs_search(board_state, depth, alpha, beta, side_to_move, color_multiplier, 
     if depth <= 0:
         return quiescence(board_state, alpha, beta, side_to_move, color_multiplier, start_time, time_limit)
 
-    if depth >= 3 and not in_check(board_state, side_to_move):
+    is_in_check = in_check(board_state, side_to_move)
+    # 通常还会检查子力数量，这里为了简化，暂时省略，但在完整引擎中很重要
+    if not is_in_check and depth >= 3:
+        # 2. 执行空步搜索
+        # R 是深度削减因子，通常取 2 或 3
+        R = 2
+        
+        # 假设我方“空着”，轮到对方走棋
+        opponent_side = 'red' if side_to_move == 'black' else 'black'
+        
+        # 以削减后的深度进行一次PVS搜索
+        # 注意这里的 alpha 和 beta 变成了 (-beta, -beta + 1)
+        val = -pvs_search(board_state, depth - 1 - R, -beta, -beta + 1, opponent_side, -color_multiplier, current_depth + 1, start_time, time_limit)
+
+        # 3. 判断是否可以裁剪
+        if val >= beta:
+            # 如果分数很高，说明我方局面优势巨大，可以直接返回beta进行裁剪
+            return beta
+    # --- 空步裁剪结束 ---
+
+    # --- 原有的 Null Move Reduction (不同于 Pruning) 逻辑，保持不变 ---
+
+    if depth >= 3 and not is_in_check:
         R = 2
         try:
             val = -pvs_search(board_state, depth - 1 - R, -beta, -beta + 1, 'red' if side_to_move=='black' else 'black', -color_multiplier, current_depth+1, start_time, time_limit)
@@ -705,7 +748,7 @@ def pvs_search(board_state, depth, alpha, beta, side_to_move, color_multiplier, 
 
     moves = generate_moves(board_state, side_to_move, current_depth)
     if not moves:
-        if in_check(board_state, side_to_move):
+        if is_in_check:
             return -MATE_SCORE + current_depth
         return 0
 
@@ -807,7 +850,7 @@ def minimax_root(board_state, side, time_limit=TIME_LIMIT):
     best_val = -MATE_SCORE - 1
     color_multiplier = 1 if side == 'black' else -1
 
-    for depth in range(3, MAX_DEPTH + 1):
+    for depth in range(2, MAX_DEPTH + 1):
         time_spent = time.time() - start_time
         if time_spent > time_limit * 0.98:
             break

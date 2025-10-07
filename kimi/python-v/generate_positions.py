@@ -14,7 +14,7 @@ def generate_positions(db_path='chess_games.db'):
     
     # Get all games
     sql = """
-        SELECT game_id, result,init_fen FROM games where result IN ('红先胜', '红先负', '红先和') and game_id > 2000 order by game_id
+        SELECT game_id, result,init_fen FROM games where result IN ('红先胜', '红先负', '红先和') and game_id > 5013 order by game_id
     """
     cursor.execute(sql)
     games = cursor.fetchall()    

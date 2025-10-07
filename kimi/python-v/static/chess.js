@@ -1,6 +1,6 @@
 /* ========== 基础数据 ========== */
 const ROWS = 10, COLS = 9;
-const PRIMARY_BACKEND_URL = 'https://xq.qzz8io.qzz.io'; // 主后端服务器URL
+const PRIMARY_BACKEND_URL = 'http://localhost:5000'; // 主后端服务器URL
 const FALLBACK_BACKEND_URL = 'http://localhost:5000'; // 备用后端服务器URL
 let BACKEND_URL = PRIMARY_BACKEND_URL; // 当前使用的后端URL
 let board = Array.from({length:ROWS},()=>Array(COLS).fill(null)); // 二维数组：存棋子 DOM
@@ -11,6 +11,8 @@ let mode = 'human-vs-ai'; // 默认人机对弈
 let selectedPiece = null;
 let validMoves = [];
 let lastMoveFrom = null; // 存储上一步的起点位置 {x, y}
+let movesHistory = []; // 存储走子历史
+let recordModePositions = []; // 存储棋谱录制模式下的位置信息
 
 // 检查并切换后端URL的函数
 async function checkAndSwitchBackend() {
@@ -51,7 +53,11 @@ function setModeListener() {
 function resetGame() {
     // 清空棋盘和状态，重新初始化
     const box = document.getElementById('chessboard');
-    box.innerHTML = '<div class="grid-lines">'+box.querySelector('.grid-lines').innerHTML+'</div>';
+    // 保存坐标元素
+    const coordinates = box.querySelectorAll('.coordinate');
+    const coordinateHTML = Array.from(coordinates).map(coord => coord.outerHTML).join('');
+    
+    box.innerHTML = '<div class="grid-lines">'+box.querySelector('.grid-lines').innerHTML+'</div>' + coordinateHTML;
     board = Array.from({length:ROWS},()=>Array(COLS).fill(null));
     currentSide = 'red';
     gameOver = false;
@@ -120,7 +126,7 @@ function xy(el){
 async function tryMove(move) {
     if (gameOver) return;
     if (isPaused) {
-        showStatus('已暂停，点击“继续”可恢复');
+        showStatus('已暂停，点击"继续"可恢复');
         return;
     }
 
@@ -128,6 +134,32 @@ async function tryMove(move) {
     const fromY = move.from.y;
     const toX = move.to.x;
     const toY = move.to.y;
+
+    // 只在棋谱录制模式下保存位置信息
+    if (mode === 'record-mode') {
+        // 保存当前棋盘状态和移动信息
+        const boardStateBeforeMove = cloneBoardToState(board);
+        movesHistory.push({
+            board: boardStateBeforeMove,
+            side: currentSide,
+            move: move
+        });
+
+        // 保存位置信息到后台数据库
+        try {
+            await fetch(`${BACKEND_URL}/save_position`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    board: boardStateBeforeMove, 
+                    side: currentSide, 
+                    move: move 
+                })
+            });
+        } catch (error) {
+            console.error('保存位置信息失败:', error);
+        }
+    }
 
     const pieceEl = board[fromY][fromX];
     if (!pieceEl) return;
@@ -196,6 +228,9 @@ async function tryMove(move) {
             setTimeout(aiMove, 1000);
         } else if (mode === 'human-vs-ai' && currentSide === 'black') {
             setTimeout(aiMove, 1000);
+        } else if (mode === 'record-mode') {
+            // 在棋谱录制模式下，启用双方手动操作
+            enableHumanMove();  // 这会同时启用红方和黑方的操作
         }
     }
     clearHints();
@@ -228,6 +263,7 @@ async function aiMove() {
         });
     }
     const move = await response.json();
+    console.log('AI 移动：', move);
     // 如果move为null，表示AI认输
     if (move === null) {
         gameOver = true;
@@ -277,9 +313,45 @@ function cloneBoardToState(boardDom) {
 }
 
 function enableHumanMove() {
-    document.querySelectorAll('.piece.red-piece').forEach(el => {
+    // 在棋谱录制模式下，启用双方手动操作
+    if (mode === 'record-mode') {
+        document.querySelectorAll('.piece').forEach(el => {
+            el.onclick = function(e) {
+                if (gameOver || isPaused) return;
+                clearHints();
+                selectedPiece = el;
+                const pos = xy(el);
+                                
+                // 根据当前行棋方启用相应的移动规则
+                if (currentSide === 'red' && el.classList.contains('red-piece')) {
+                    validMoves = getValidMoves(pos.x, pos.y);
+                    showHints(validMoves);
+                } else if (currentSide === 'black' && el.classList.contains('black-piece')) {                
+                    validMoves = getValidMoves(pos.x, pos.y);                    
+                    showHints(validMoves);
+                }
+            };
+        });
+    } else {
+        // 原有的人机对弈模式逻辑
+        document.querySelectorAll('.piece.red-piece').forEach(el => {
+            el.onclick = function(e) {
+                if (gameOver || isPaused || mode !== 'human-vs-ai' || currentSide !== 'red') return;
+                clearHints();
+                selectedPiece = el;
+                const pos = xy(el);
+                validMoves = getValidMoves(pos.x, pos.y);
+                showHints(validMoves);
+            };
+        });
+    }
+}
+
+// 为黑方添加手动操作功能
+function enableBlackHumanMove() {
+    document.querySelectorAll('.piece.black-piece').forEach(el => {
         el.onclick = function(e) {
-            if (gameOver || isPaused || mode !== 'human-vs-ai' || currentSide !== 'red') return;
+            if (gameOver || isPaused || mode !== 'record-mode' || currentSide !== 'black') return;
             clearHints();
             selectedPiece = el;
             const pos = xy(el);
@@ -291,9 +363,16 @@ function enableHumanMove() {
 
 function getValidMoves(x, y) {
     const moves = [];
+    // 获取当前棋子的颜色
+    const piece = board[y][x];
+    if (!piece) return moves;
+    
+    const isRedPiece = piece.classList.contains('red-piece');
+    const side = isRedPiece ? 'red' : 'black';
+    
     for (let ty = 0; ty < ROWS; ty++) {
         for (let tx = 0; tx < COLS; tx++) {
-            if (canMoveOn(x, y, tx, ty, 'red')) {
+            if (canMoveOn(x, y, tx, ty, side)) {
                 moves.push({x: tx, y: ty});
             }
         }
@@ -327,9 +406,10 @@ function clearHints() {
 
 function canMoveOn(fx, fy, tx, ty, side) {
     const piece = board[fy][fx];
-    if (!piece || (side === 'red' && !piece.classList.contains('red-piece'))) return false;
+    if (!piece || (side === 'red' && !piece.classList.contains('red-piece')) || (side === 'black' && !piece.classList.contains('black-piece'))) return false;
     const target = board[ty][tx];
-    if (target && target.classList.contains('red-piece')) return false;
+    // 修正吃子判断逻辑，正确识别己方棋子
+    if (target && ((side === 'red' && target.classList.contains('red-piece')) || (side === 'black' && target.classList.contains('black-piece')))) return false;
     const name = piece.textContent.trim();
     // 不能原地不动
     if (fx === tx && fy === ty) return false;

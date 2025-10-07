@@ -1,0 +1,52 @@
+https://www.xqipu.com/ 象棋棋谱大全 | 象棋谱   走棋坐标如下图所示   黑在上-红在下
+
+红方横坐标： '九', '八', '七', '六', '五', '四', '三', '二', '一'
+
+黑方横坐标： '1', '2', '3', '4', '5', '6', '7', '8', '9'
+
+"进"就是向对手方前进，"平"就按本方的横坐标移动，
+
+
+
+python后台收到的
+Board state: [[{'type': '車', 'side': 'red'}, {'type': '馬', 'side': 'red'}, {'type': '相', 'side': 'red'}, {'type': '仕', 'side': 'red'}, {'type': '帥', 'side': 'red'}, {'type': '仕', 'side': 'red'}, {'type': '相', 'side': 'red'}, {'type': '馬', 'side': 'red'}, {'type': '車', 'side': 'red'}], [None, None, None, None, None, None, None, None, None], [None, None, None, None, {'type': '炮', 'side': 'red'}, None, None, {'type': '炮', 'side': 'red'}, None], [{'type': '兵', 'side': 'red'}, None, {'type': '兵', 'side': 'red'}, None, {'type': '兵', 'side': 'red'}, None, {'type': '兵', 'side': 'red'}, None, {'type': '兵', 'side': 'red'}], [None, None, None, None, None, None, None, None, None], [None, None, None, None, None, None, None, None, None], [{'type': '卒', 'side': 'black'}, None, {'type': '卒', 'side': 'black'}, None, {'type': ' 卒', 'side': 'black'}, None, {'type': '卒', 'side': 'black'}, None, {'type': '卒', 'side': 'black'}], [None, {'type': ' 炮', 'side': 'black'}, None, None, None, None, None, {'type': '炮', 'side': 'black'}, None], [None, None, None, None, None, None, None, None, None], [{'type': '車', 'side': 'black'}, {'type': '馬', 'side': 'black'}, {'type': '象', 'side': 'black'}, {'type': '士', 'side': 'black'}, {'type': '將', 'side': 'black'}, {'type': '士', 'side': 'black'}, {'type': '象', 'side': 'black'}, {'type': '馬', 'side': 'black'}, {'type': '車', 'side': 'black'}]]
+
+执行走棋: black -> '马8进7'
+  成功: Move(from_x=1, from_y=3, to_x=2, to_y=1)
+  ０ １ ２ ３ ４ ５ ６ ７ ８ (X)
+ --------------------------
+0| ・  ・  相  ・  帥  仕  炮  ・  ・
+1| ・  ・  馬  ・   ・   ・  炮  ・  ・
+2| ・  ・  ・  ・  相  仕  ・  ・  ・
+3| ・  ・  卒  ・  ・  ・  ・  車  炮 
+4| 兵  ・  ・  ・  ・  ・  ・  ・  車 
+5| ・  ・  ・  ・  ・  ・  ・  ・  ・
+6| ・  ・  ・  ・  ・  ・  ・  ・  ・
+7| ・  ・  ・  ・  象  ・  ・  ・  ・
+8| ・  ・  ・  ・  士  ・  ・  ・  ・
+9| ・  ・  ・  ・  將  士  象  ・  ・
+ --------------------------
+当前走棋方: red
+
+执行走棋: red -> '炮七平四'
+  成功: Move(from_x=6, from_y=0, to_x=3, to_y=0)
+  ０ １ ２ ３ ４ ５ ６ ７ ８ (X)
+ --------------------------
+0| ・  ・  相  炮  帥  仕  ・  ・  ・
+1| ・  ・  馬  ・  ・  ・  炮  ・  ・
+2| ・  ・  ・  ・  相  仕  ・  ・  ・
+3| ・  ・  卒  ・  ・  ・  ・  車  炮 
+4| 兵  ・  ・  ・  ・  ・  ・  ・  車 
+5| ・  ・  ・  ・  ・  ・  ・  ・  ・
+6| ・  ・  ・  ・  ・  ・  ・  ・  ・
+7| ・  ・  ・  ・  象  ・  ・  ・  ・
+8| ・  ・  ・  ・  士  ・  ・  ・  ・
+9| ・  ・  ・  ・  將  士  象  ・  ・
+ --------------------------
+
+
+ <div id="qipu-moves-iccs">h2e2h9g7h0g2i9h9i0h0b9c7c3c4g6g5h0h6h7i7h6g6i7i8b0c2d9e8c2d4h9h4b2b4i8g8g6f6c9e7e2d2c6c5g3g4h4h5c4c5e7c5b4c4c7d5d2d5g5g4d5d8g8d8c4g4h5g5c0e2b7b6f6f1c5e7a0b0b6d6d4c6d8d9c6b8a9c9b8d9c9d9d0e1g7h5b0b6g5c5g4d4d6c6d4d2a6a5g2h4d9d5f1f3</div>
+ <div id="qipu-init-fen"></div>	
+
+
+ 棋谱文件的关键信息

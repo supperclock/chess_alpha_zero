@@ -5,25 +5,15 @@ Advanced Chinese Chess AI (完整文件)
 """
 
 import random
-import copy
-import logging
 import time
 from collections import defaultdict
-from opening_book import get_opening_move, Move
+from opening_book import find_from_position, Move
+from util import *
 
 # --- Configuration ---
-MAX_DEPTH = 10
+MAX_DEPTH = 3
 TIME_LIMIT = 100.0
 MIN_TIME_LEFT = 0.5
-
-logging.basicConfig(
-    filename='kimi_backend_advanced.log',
-    level=logging.INFO,
-    format='[%(asctime)s] %(levelname)s: %(message)s'
-)
-
-def log(msg):
-    logging.info(msg)
 
 # ---- Constants ----
 ROWS = 10
@@ -83,8 +73,7 @@ for p in PIECES:
 ZOBRIST_SIDE = random.getrandbits(64)
 
 # Tables
-from tt_cache import TTCacher
-TT = TTCacher("tt_cache.sqlite")
+
 KILLER_MOVES = defaultdict(lambda: [None, None])
 HISTORY_TABLE = defaultdict(lambda: 0)
 
@@ -305,7 +294,7 @@ def unmake_move(board, move, captured):
     board[ty][tx] = captured
     move.captured = None
 
-def generate_moves(board_state, side, tt_best_move=None, depth=0):
+def generate_moves(board_state, side, depth=0):
     pseudo = []
     for y in range(ROWS):
         for x in range(COLS):
@@ -347,12 +336,7 @@ def generate_moves(board_state, side, tt_best_move=None, depth=0):
                 m.score = score
                 legal.append(m)
             unmake_move(board_state, m, captured)
-        legal.sort(key=lambda x: x.score, reverse=True)
-        if tt_best_move:
-            for i, m in enumerate(legal):
-                if m == tt_best_move:
-                    legal.insert(0, legal.pop(i))
-                    break
+        legal.sort(key=lambda x: x.score, reverse=True)       
         return legal
 
     legal = []
@@ -395,12 +379,7 @@ def generate_moves(board_state, side, tt_best_move=None, depth=0):
             elif m == km[1]: score += 3000
             m.score = score
             legal.append(m)
-    legal.sort(key=lambda x: x.score, reverse=True)
-    if tt_best_move:
-        for i, m in enumerate(legal):
-            if m == tt_best_move:
-                legal.insert(0, legal.pop(i))
-                break
+    legal.sort(key=lambda x: x.score, reverse=True)    
     return legal
 
 def copy_board(board_state):
@@ -711,20 +690,6 @@ def pvs_search(board_state, depth, alpha, beta, side_to_move, color_multiplier, 
     if start_time and time_limit and (time.time() - start_time) > time_limit:
         raise TimeoutError
 
-    zob = compute_zobrist(board_state, side_to_move)
-    tt_entry = TT.get(zob)
-    if tt_entry and tt_entry['depth'] >= depth:
-        entry_val = tt_entry['value']
-        entry_flag = tt_entry['flag']
-        tt_val = entry_val * color_multiplier
-        if entry_flag == 'EXACT':
-            return tt_val
-        if entry_flag == 'LOWER' and tt_val > alpha:
-            alpha = tt_val
-        if entry_flag == 'UPPER' and tt_val < beta:
-            beta = tt_val
-        if alpha >= beta:
-            return tt_val
 
     if depth <= 0:
         return quiescence(board_state, alpha, beta, side_to_move, color_multiplier, start_time, time_limit)
@@ -738,7 +703,7 @@ def pvs_search(board_state, depth, alpha, beta, side_to_move, color_multiplier, 
         except TimeoutError:
             pass
 
-    moves = generate_moves(board_state, side_to_move, tt_entry.get('best_move') if tt_entry else None, current_depth)
+    moves = generate_moves(board_state, side_to_move, current_depth)
     if not moves:
         if in_check(board_state, side_to_move):
             return -MATE_SCORE + current_depth
@@ -779,7 +744,6 @@ def pvs_search(board_state, depth, alpha, beta, side_to_move, color_multiplier, 
 
         if val > best_val:
             best_val = val
-            best_move = m
 
         if val > alpha:
             alpha = val
@@ -798,25 +762,42 @@ def pvs_search(board_state, depth, alpha, beta, side_to_move, color_multiplier, 
             break
 
         first = False
-
-    tt_val_black_perspective = best_val * color_multiplier
-    flag = 'EXACT'
-    if best_val <= alpha:
-        flag = 'UPPER'
-    elif best_val >= beta:
-        flag = 'LOWER'
-    # TT[zob] = {'value': tt_val_black_perspective, 'depth': depth, 'flag': flag, 'best_move': best_move}
-    TT.put(zob, tt_val_black_perspective, depth, flag, best_move)
     return best_val
 
+import re
+def convert_move_string(s):
+    """
+    将"Move(from_x=1, from_y=2, to_x=4, to_y=2)"格式的字符串
+    转换为{'from': {'x': 1, 'y': 2}, 'to': {'x': 4, 'y': 2}}格式的字典
+    通用处理任意符合格式的输入字符串
+    """    
+    # 使用正则表达式提取字符串中的数值
+    pattern = r"Move\(from_x=(\d+), from_y=(\d+), to_x=(\d+), to_y=(\d+)\)"
+    match = re.match(pattern, s)
+    
+    if not match:        
+        raise ValueError("输入字符串格式不正确，应为: Move(from_x=数字, from_y=数字, to_x=数字, to_y=数字)")
+    
+    # 提取匹配到的数值并转换为整数
+    from_x, from_y, to_x, to_y = map(int, match.groups())
+    
+    # 构建并返回对应的字典
+    return {
+        'from': {'x': from_x, 'y': from_y},
+        'to': {'x': to_x, 'y': to_y}
+    }
 # ----------------- Root Iterative Deepening using PVS -----------------
-def minimax_root(board_state, side, time_limit=TIME_LIMIT):
-    log(f"[搜索] Root PVS 开始，执棋方: {side}")
-    # move = get_opening_move(board_state, side)
-    # if move:
-    #     log("[搜索] 开局库命中，直接返回开局走法")
-    #     return move
+def minimax_root(board_state, side, time_limit=TIME_LIMIT):    
+    move = find_from_position(board_state, side)    
+    if move:
+        log("[搜索] 棋谱库命中，直接返回棋谱走法"+move)
+        return convert_move_string(move)
+        #将move格式由字符串"Move(from_x=1, from_y=2, to_x=4, to_y=2)"改为{'from': {'y': 7, 'x': 7}, 'to': {'y': 7, 'x': 6}}                
+        # rlt = convert_move_string(move)
+        # log(f"[搜索] 格式转换后：{rlt}")
+        # return rlt
 
+    log(f"[搜索] Root PVS 开始，执棋方: {side}")
     moves = generate_moves(board_state, side)
     if not moves:
         return None
@@ -826,7 +807,7 @@ def minimax_root(board_state, side, time_limit=TIME_LIMIT):
     best_val = -MATE_SCORE - 1
     color_multiplier = 1 if side == 'black' else -1
 
-    for depth in range(1, MAX_DEPTH + 1):
+    for depth in range(3, MAX_DEPTH + 1):
         time_spent = time.time() - start_time
         if time_spent > time_limit * 0.98:
             break
@@ -836,13 +817,11 @@ def minimax_root(board_state, side, time_limit=TIME_LIMIT):
             current_best_move = None
             alpha = -MATE_SCORE
             beta = MATE_SCORE
-
-            zob = compute_zobrist(board_state, side)
-            tt_entry = TT.get(zob)
-            tt_best_move = tt_entry.get('best_move') if tt_entry else None
-            moves = generate_moves(board_state, side, tt_best_move, depth=0)
+          
+            moves = generate_moves(board_state, side, depth=0)            
 
             for m in moves:
+                log(f"[搜索] 迭代深度 {depth}，当前走法: {m.to_dict()}")
                 captured = make_move(board_state, m)
                 try:
                     val = -pvs_search(board_state, depth-1, -beta, -alpha, 'red' if side=='black' else 'black', -color_multiplier, 1, start_time, time_limit * 0.95)

@@ -1,38 +1,39 @@
-from flask import Flask, request, jsonify, send_from_directory, stream_with_context
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import os
-from ai import minimax_root, check_game_over,logging
-
+from ai import minimax_root, check_game_over
+from util import log
 
 app = Flask(__name__)
 CORS(app)
 
-
 @app.route('/ai_move', methods=['POST'])
 def ai_move():    
-    # logging.info(f"/ai_move {request.method} data={request.json}")
-    data = request.json
-    if not data:
-        return jsonify({"error": "No JSON data provided"}), 400
-    
-    if 'board' not in data:
-        return jsonify({"error": "Missing 'board' field"}), 400
-    if 'side' not in data:
-        return jsonify({"error": "Missing 'side' field"}), 400
+    # log.info(f"/ai_move {request.method} data={request.json}")
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
         
-    board_state = data['board']
-    side_to_move = data['side']
-    
-    best_move = minimax_root(board_state, side_to_move, time_limit=10)
-    # logging.info(f"Best move: {best_move}")
-    return jsonify(best_move)
-  
-    
+        if 'board' not in data:
+            return jsonify({"error": "Missing 'board' field"}), 400
+        if 'side' not in data:
+            return jsonify({"error": "Missing 'side' field"}), 400
+            
+        board_state = data['board']
+        side_to_move = data['side']
+            
+        best_move = minimax_root(board_state, side_to_move)
+        log(f"Best move: {best_move}")
+        return jsonify(best_move)    
+    except Exception as e:
+      log(f"Error in /ai_move: {e}")
+      return jsonify({"error": str(e)}), 500
 
 @app.route('/check_game_over', methods=['POST'])
 def check_game_over_endpoint():
     try:
-    #   logging.info(f"[LOG] /check_game_over {request.method} data={request.json}")
+    #   log.info(f"[LOG] /check_game_over {request.method} data={request.json}")
       data = request.json
       if not data:
           return jsonify({"error": "No JSON data provided"}), 400
@@ -43,8 +44,37 @@ def check_game_over_endpoint():
       board_state = data['board']
       return jsonify(check_game_over(board_state))
     except Exception as e:
-      logging.error(f"Error in /check_game_over: {e}")
+      log(f"Error in /check_game_over: {e}")
       return jsonify({"error": str(e)}), 500
+
+@app.route('/save_position', methods=['POST'])
+def save_position():
+    """
+    保存棋盘位置信息到数据库
+    """
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+        
+        # 检查必需字段
+        required_fields = ['board', 'side', 'move']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({"error": f"Missing '{field}' field"}), 400
+        
+        board_state = data['board']
+        side_to_move = data['side']
+        move = data['move']
+        
+        # 保存位置信息到数据库
+        from record_positions import save_position_to_db
+        save_position_to_db(board_state, side_to_move, move)
+        
+        return jsonify({"message": "Position saved successfully"})
+    except Exception as e:
+        log(f"Error in /save_position: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/opening_stats', methods=['GET'])
 def get_opening_stats_endpoint():
@@ -54,7 +84,7 @@ def get_opening_stats_endpoint():
         stats = get_opening_stats()
         return jsonify(stats)
     except Exception as e:
-        logging.error(f"Error in /opening_stats: {e}")
+        log(f"Error in /opening_stats: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/reset_opening_stats', methods=['POST'])
@@ -65,7 +95,7 @@ def reset_opening_stats_endpoint():
         reset_opening_stats()
         return jsonify({"message": "开局库统计已重置"})
     except Exception as e:
-        logging.error(f"Error in /reset_opening_stats: {e}")
+        log(f"Error in /reset_opening_stats: {e}")
         return jsonify({"error": str(e)}), 500
 
 # 创建static目录
@@ -91,5 +121,5 @@ def static_files(filename):
         return "File not found", 404
 
 if __name__ == '__main__':
-    print("[后端] 启动Flask服务器...", flush=True)
+    log("[后端] 启动Flask服务器...")
     app.run(host='0.0.0.0', port=5000, threaded=True)

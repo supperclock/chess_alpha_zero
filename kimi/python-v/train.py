@@ -12,10 +12,10 @@ from ai import (
     make_move, unmake_move, generate_moves,
     in_check, find_general, check_game_over, copy_board
 )
-
+from util import * 
 # ---------------- 超参数 ----------------
 MODEL_DIR        = "ckpt"          # 权重保存目录
-SELFPLAY_GAMES   = 1000000         # 总对局数（可 Ctrl-C 随时停）
+SELFPLAY_GAMES   = 1         # 总对局数（可 Ctrl-C 随时停）
 MCTS_SIMULS      = 400             # 每步 MCTS 模拟次数
 C_PUCT           = 2.0
 TAU              = 1.0             # 温度，前 30 步用 1.0，之后 0.1
@@ -134,8 +134,8 @@ def print_board_color(board, current_player):
     board: 10×9 列表
     current_player: 'red'/'black'
     """
-    print("\n   a  b  c  d  e  f  g  h  i  (列)")
-    print(" --------------------------")
+    log("\n   a  b  c  d  e  f  g  h  i  (列)")
+    log(" --------------------------")
     for y, row in enumerate(board):
         row_str = f"{y}|"
         for piece in row:
@@ -147,9 +147,9 @@ def print_board_color(board, current_player):
                     row_str += f"\033[1m {piece_char} \033[0m"
                 else:
                     row_str += f"\033[91m {piece_char} \033[0m"
-        print(row_str)
-    print(" --------------------------")
-    print(f"当前走棋方: {current_player}\n")
+        log(row_str)
+    log(" --------------------------")
+    log(f"当前走棋方: {current_player}\n")
 
 def wait_key():
     input(">>> 按回车继续下一步...")
@@ -168,7 +168,7 @@ def self_play_one_game(net, pause=True):
     step = 0
 
     while True:
-        print(f"\n======== 第 {step+1} 步 （{side} 方）========")
+        log(f"\n======== 第 {step+1} 步 （{side} 方）========")
         print_board_color(board, side)
 
         # MCTS 给出策略 π 与价值
@@ -185,7 +185,7 @@ def self_play_one_game(net, pause=True):
         # 按 π 随机落子
         moves, probs = list(pi.keys()), list(pi.values())
         move = random.choices(moves, weights=probs)[0]
-        print(f"AI 选择：{move.fy}{move.fx} → {move.ty}{move.tx}")
+        log(f"AI 选择：{move.fy}{move.fx} → {move.ty}{move.tx}")
         captured = make_move(board, move)
         step += 1
 
@@ -193,7 +193,7 @@ def self_play_one_game(net, pause=True):
         game_over = check_game_over(board)
         if game_over['game_over']:
             print_board_color(board, side)
-            print(f"对局结束：{game_over['message']}")
+            log(f"对局结束：{game_over['message']}")
             z = 1.0 if game_over['message'][0] == '黑' else -1.0
             return [(tensor, pi_vec, z if who=='black' else -z)
                     for tensor, pi_vec, who in examples]
@@ -239,7 +239,7 @@ def train(net, examples):
             tot_pi += L_pi.item()
             tot_v  += L_v.item()
             n += 1
-        print(f"  epoch {epoch+1}/{EPOCHS_PER_GAME}  loss_pi={tot_pi/n:.4f}  loss_v={tot_v/n:.4f}")
+        log(f"  epoch {epoch+1}/{EPOCHS_PER_GAME}  loss_pi={tot_pi/n:.4f}  loss_v={tot_v/n:.4f}")
 
 # ---------------- 主循环 ----------------
 def main():
@@ -247,20 +247,20 @@ def main():
     replay_buffer = deque(maxlen=200000)   # 经验回放缓冲
 
     for game in range(1, SELFPLAY_GAMES+1):
-        print(f"\n===== 自对弈第 {game} 盘 =====")
+        log(f"\n===== 自对弈第 {game} 盘 =====")
         examples = self_play_one_game(net, pause=False)
         replay_buffer.extend(examples)
-        print(f"  本盘 {len(examples)} 步，缓冲共 {len(replay_buffer)} 步")
+        log(f"  本盘 {len(examples)} 步，缓冲共 {len(replay_buffer)} 步")
 
         if len(replay_buffer) >= 10000:      # 缓冲够大再训练
-            print("  开始训练...")
+            log("  开始训练...")
             train(net, list(replay_buffer))
 
         if game % CHECKPOINT_EVERY == 0:
             path = os.path.join(MODEL_DIR, f"ckpt_{game}.pth")
             torch.save(net.model.state_dict(), path)
             torch.save(net.model.state_dict(), os.path.join(MODEL_DIR, "latest.pth"))
-            print(f"  已保存 {path}")
+            log(f"  已保存 {path}")
 
         # 动态降温
         global TAU

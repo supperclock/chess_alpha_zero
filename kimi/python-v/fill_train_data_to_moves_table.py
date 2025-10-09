@@ -3,6 +3,7 @@
 import sqlite3, pickle, torch, tqdm
 from pathlib import Path
 from opening_book import Move  
+from util import * 
 
 # 你的项目目录
 PROJECT = Path(__file__).resolve().parent
@@ -33,7 +34,7 @@ def compute_z(game_id, conn):
 def build_pi(move):
     """返回 one-hot 向量，长度=合法动作空间"""
     pi = torch.zeros(len(MOVE_TO_INDEX))
-    key = (move.fy, move.fx, move.ty, move.tx)
+    key = (move.fx, move.fy, move.tx, move.ty)
     pi[MOVE_TO_INDEX[key]] = 1.0
     return pi
 
@@ -54,7 +55,7 @@ def str_to_move(iccs_str):
     except Exception:
         raise ValueError(f"非法 ICCS 字符串: {iccs_str}")
     
-    return Move(from_x, from_y, to_x, to_y)
+    return Move(from_y, from_x, to_y, to_x)
 def process_game(game_id, moves, conn):
     """moves: List[Row] 同一盘棋按 move_index 排序"""
     board = copy_board(INITIAL_SETUP)
@@ -62,6 +63,8 @@ def process_game(game_id, moves, conn):
     z     = compute_z(game_id, conn)
     for row in moves:
         move = str_to_move(row['iccs'])
+        log(f"{game_id}:{row['iccs']}:{row['move_index']}: {side}: {move.to_dict()}")
+
         # 计算 tensor（走子前的局面）
         tensor = board_to_tensor(board, side).squeeze(0)
         pi     = build_pi(move)

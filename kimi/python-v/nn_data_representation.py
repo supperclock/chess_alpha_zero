@@ -1,6 +1,7 @@
 import torch
 from opening_book import Move  
-from ai import GEN_MAP, ROWS, COLS, inside  
+from ai import GEN_MAP, ROWS, COLS, inside
+from util import * 
 
 # --- 1. 棋子到网络通道的映射 ---
 # 我们为双方的7种不同棋子创建独立的通道
@@ -80,7 +81,7 @@ def create_move_maps():
             # 模拟每种棋子在这个位置
             for piece_type, move_gen_func in GEN_MAP.items():
                 # 只需要一个代表性的棋子类型
-                if piece_type in ['俥', '车', '傌', '马', '砲']:
+                if piece_type in ['俥', '车', '傌', '马', '砲', '卒', '士', '象', '將']:
                     continue
                 
                 # 模拟双方
@@ -98,7 +99,13 @@ def create_move_maps():
                             
                     pseudo_board[r_from][c_from] = None # 清理
 
-    print(f"走法映射创建完成，总共有 {len(MOVE_TO_INDEX)} 种可能的走法。")
+    log(f"走法映射创建完成，总共有 {len(MOVE_TO_INDEX)} 种可能的走法。")
+    #打印MOVE_TO_INDEX内容
+    for key, idx in MOVE_TO_INDEX.items():
+        log(f"{key} -> {idx}")
+
+
+
 
 
 # 在模块加载时自动创建映射

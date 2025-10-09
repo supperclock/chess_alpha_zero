@@ -56,7 +56,7 @@ class NN_Interface:
             total_prob = 0.0
             
             for move in legal_moves:
-                move_key = (move.fy, move.fx, move.ty, move.tx)
+                move_key = (move.fx, move.fy, move.tx, move.ty)
                 if move_key in MOVE_TO_INDEX:
                     move_idx = MOVE_TO_INDEX[move_key]
                     prob = policy_probs[move_idx].item()

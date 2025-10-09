@@ -2,6 +2,7 @@ import torch
 from nn_model import XiangqiNet
 from nn_data_representation import board_to_tensor, MOVE_TO_INDEX, INDEX_TO_MOVE
 from ai import generate_moves  # 导入你现有的走法生成器
+import os
 
 class NN_Interface:
     def __init__(self, model_path=None):
@@ -10,11 +11,15 @@ class NN_Interface:
         self.model = XiangqiNet().to(self.device)
         
         if model_path:
-            try:
-                self.model.load_state_dict(torch.load(model_path, map_location=self.device))
-                print(f"模型已从 {model_path} 加载。")
-            except FileNotFoundError:
-                print(f"警告: 找不到模型文件 {model_path}。将使用随机初始化的模型。")
+            if os.path.isfile(model_path):
+                state = torch.load(model_path, map_location=self.device)
+                self.model.load_state_dict(state)
+                print(f"模型已加载：{model_path}")
+            else:
+                print(f"权重文件不存在，将创建并初始化：{model_path}")
+                os.makedirs(os.path.dirname(model_path), exist_ok=True)
+                torch.save(self.model.state_dict(), model_path)
+                print("已保存初始权重。")
         else:
             print("警告: 未提供模型路径。将使用随机初始化的模型。")
             

@@ -6,7 +6,7 @@ from ai import GEN_MAP, ROWS, COLS, inside
 # 我们为双方的7种不同棋子创建独立的通道
 PIECE_TO_CHANNEL = {
     ('帥', 'red'): 0, ('仕', 'red'): 1, ('相', 'red'): 2, ('馬', 'red'): 3, ('車', 'red'): 4, ('炮', 'red'): 5, ('兵', 'red'): 6,
-    ('將', 'black'): 7, ('士', 'black'): 8, ('象', 'black'): 9, ('馬', 'black'): 10, ('車', 'black'): 11, ('砲', 'black'): 12, ('卒', 'black'): 13,
+    ('將', 'black'): 7, ('士', 'black'): 8, ('象', 'black'): 9, ('馬', 'black'): 10, ('車', 'black'): 11, ('炮', 'black'): 12, ('卒', 'black'): 13,
 }
 # 统一棋子名称，方便查找
 CANONICAL_PIECE_NAMES = {
@@ -15,7 +15,7 @@ CANONICAL_PIECE_NAMES = {
     '相': '相', '象': '象',
     '馬': '馬', '傌': '馬', '马': '馬',
     '車': '車', '俥': '車', '车': '車',
-    '炮': '炮', '砲': '砲',
+    '炮': '炮', '炮': '炮',
     '兵': '兵', '卒': '卒',
 }
 NUM_CHANNELS = 14 # 7种棋子 * 2个阵营
@@ -80,7 +80,7 @@ def create_move_maps():
             # 模拟每种棋子在这个位置
             for piece_type, move_gen_func in GEN_MAP.items():
                 # 只需要一个代表性的棋子类型
-                if piece_type in ['俥', '车', '傌', '马', '砲', '卒', '士', '象', '將']:
+                if piece_type in ['俥', '车', '傌', '马', '砲']:
                     continue
                 
                 # 模拟双方
@@ -90,7 +90,7 @@ def create_move_maps():
                     # 生成该棋子从该位置的伪合法移动
                     moves = move_gen_func(pseudo_board, c_from, r_from, side)
                     for move in moves:
-                        key = (move.fy, move.fx, move.ty, move.tx)
+                        key = (move.fx, move.fy, move.tx, move.ty)
                         if key not in MOVE_TO_INDEX:
                             MOVE_TO_INDEX[key] = idx
                             INDEX_TO_MOVE.append(key)

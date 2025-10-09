@@ -48,6 +48,9 @@ def init_chess_database(db_path='chess_games.db'):
             side        TEXT,           -- red/black
             move        TEXT,           -- 走法 (UCI 或自定义格式)
             iccs        TEXT,           -- iccs
+            tensor      BLOB,               -- 棋盘张量 (CHW) 二进制
+            pi          BLOB,               -- 策略向量 (float32) 二进制
+            z           REAL,                -- 最终胜负
             PRIMARY KEY (game_id, move_index)
         )
     ''')

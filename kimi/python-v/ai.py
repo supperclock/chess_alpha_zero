@@ -834,6 +834,10 @@ def nn_interface(board_state, side):
     from nn_interface import NN_Interface
     nn_player = NN_Interface(model_path="ckpt/latest.pth") 
     value, policy = nn_player.predict(board_state, side)
+    # 按概率从高到低排序并打印
+    sorted_policy = sorted(policy.items(), key=lambda item: item[1], reverse=True)
+    for move, prob in sorted_policy[:5]: # 打印前5个最可能的走法
+        print(f"  - 走法: {move.to_str()}, 概率: {prob:.4f}")
 
 # ----------------- Root Iterative Deepening using PVS -----------------
 def minimax_root(board_state, side, time_limit=TIME_LIMIT):    

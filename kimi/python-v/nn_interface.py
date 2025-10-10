@@ -1,6 +1,6 @@
 import torch
 from nn_model import XiangqiNet
-from nn_data_representation import board_to_tensor, MOVE_TO_INDEX, INDEX_TO_MOVE
+from nn_data_representation import board_to_tensor, get_move_maps
 from ai import generate_moves  # 导入你现有的走法生成器
 import os
 
@@ -9,7 +9,8 @@ class NN_Interface:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"正在使用设备: {self.device}")
         self.model = XiangqiNet().to(self.device)
-        
+
+        self.move_to_idx, self.idx_to_move = get_move_maps()
         if model_path:
             if os.path.isfile(model_path):
                 state = torch.load(model_path, map_location=self.device)
@@ -57,8 +58,8 @@ class NN_Interface:
             
             for move in legal_moves:
                 move_key = (move.fx, move.fy, move.tx, move.ty)
-                if move_key in MOVE_TO_INDEX:
-                    move_idx = MOVE_TO_INDEX[move_key]
+                if move_key in self.move_to_idx:
+                    move_idx = self.move_to_idx[move_key]
                     prob = policy_probs[move_idx].item()
                     legal_policy[move] = prob
                     total_prob += prob

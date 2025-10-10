@@ -4,7 +4,8 @@
 AlphaZero-style 自对弈训练脚本（中国象棋）
 """
 import os, time, random, json, torch, torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import IterableDataset, DataLoader
+import sqlite3, pickle, torch
 from collections import defaultdict, deque
 from nn_interface import NN_Interface
 from nn_data_representation import board_to_tensor, MOVE_TO_INDEX
@@ -13,6 +14,7 @@ from ai import (
     in_check, find_general, check_game_over, copy_board
 )
 from util import * 
+from tqdm import tqdm
 # ---------------- 超参数 ----------------
 MODEL_DIR        = "ckpt"          # 权重保存目录
 SELFPLAY_GAMES   = 1         # 总对局数（可 Ctrl-C 随时停）
@@ -23,6 +25,7 @@ BATCH_SIZE       = 256
 LR               = 5e-4
 EPOCHS_PER_GAME  = 1
 CHECKPOINT_EVERY = 10              # 每 N 盘存一次权重
+SAVE_EVERY_N_BATCHES = 1000   
 DEVICE           = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 os.makedirs(MODEL_DIR, exist_ok=True)
@@ -202,69 +205,132 @@ def self_play_one_game(net, pause=True):
         if pause:
             wait_key()
 
-# ---------------- 数据集 ----------------
-class GameDataSet(Dataset):
-    def __init__(self, buffer):
-        self.buffer = buffer
-    def __len__(self):
-        return len(self.buffer)
-    def __getitem__(self, idx):
-        tensor, pi, z = self.buffer[idx]
-        return tensor, pi, torch.tensor(z, dtype=torch.float32)
+class SQLiteChessDataset(IterableDataset):
+    def __init__(self, shuffle=True):
+        self.shuffle = shuffle
 
+    def __iter__(self):
+        conn = sqlite3.connect('chess_games.db', check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        sql = "SELECT tensor, pi, z FROM moves where tensor IS NOT NULL"
+        if self.shuffle:
+            sql += " ORDER BY RANDOM()"
+        cur = conn.execute(sql)
+        for row in cur:
+            yield (pickle.loads(row['tensor']),
+                  pickle.loads(row['pi']),
+                  torch.tensor(row['z'], dtype=torch.float32))
+        conn.close()
+
+def make_loader(batch_size=512, workers=4):
+    return DataLoader(SQLiteChessDataset(),
+                    batch_size=batch_size,
+                    num_workers=workers,
+                    prefetch_factor=2)
+
+# # ---------------- 数据集 ----------------
+# class GameDataSet(Dataset):
+#     def __init__(self, buffer):
+#         self.buffer = buffer
+#     def __len__(self):
+#         return len(self.buffer)
+#     def __getitem__(self, idx):
+#         tensor, pi, z = self.buffer[idx]
+#         return tensor, pi, torch.tensor(z, dtype=torch.float32)
 # ---------------- 训练 ----------------
-def train(net, examples):
-    dataset   = GameDataSet(examples)
-    loader    = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
+def train(net, model_dir):
+    # dataset   = GameDataSet(examples)
+    # loader    = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
+    loader = make_loader(batch_size=BATCH_SIZE) # Note: BATCH_SIZE is used from hyperparameters
     optimizer = torch.optim.Adam(net.model.parameters(), lr=LR, weight_decay=1e-4)
-    loss_pi   = nn.CrossEntropyLoss()
-    loss_v    = nn.MSELoss()
+    loss_v = nn.MSELoss()
 
     net.model.train()
     for epoch in range(EPOCHS_PER_GAME):
-        tot_pi, tot_v, n = 0.0, 0.0, 0
-        for board_tensor, pi_vec, z in loader:
+        log(f"Epoch {epoch+1}/{EPOCHS_PER_GAME} Training:")
+        
+        # Use tqdm for a dynamic progress bar
+        # desc: Description text for the bar
+        # leave=True: Keeps the bar on screen after completion
+        # ncols=100: Sets a fixed width for the bar for better alignment
+        # unit="batch": Describes the unit of progress
+        progress_bar = tqdm(loader, desc=f"Epoch {epoch+1}", leave=True, ncols=120, unit="batch")
+
+        total_loss_pi = 0.0
+        total_loss_v = 0.0
+        batches = 0
+
+        for board_tensor, pi_vec, z in progress_bar:
             board_tensor, pi_vec, z = board_tensor.to(DEVICE), pi_vec.to(DEVICE), z.to(DEVICE)
 
-            pred_pi, pred_v = net.model(board_tensor.unsqueeze(1)[:, :-1, :, :])  # 去掉辅助通道
-            # 计算损失
-            L_pi = -torch.sum(pi_vec * torch.log_softmax(pred_pi, dim=1)) / pi_vec.size(0)
-            L_v  = loss_v(pred_v.squeeze(), z)
+            pred_pi, pred_v = net.model(board_tensor)
+            
+            # Calculate losses
+            # Policy loss: Using cross-entropy is more standard and stable for policy heads
+            L_pi = -torch.sum(pi_vec * torch.log_softmax(pred_pi, dim=1), dim=1).mean()
+            L_v = loss_v(pred_v.squeeze(), z)
             loss = L_pi + L_v
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
-            tot_pi += L_pi.item()
-            tot_v  += L_v.item()
-            n += 1
-        log(f"  epoch {epoch+1}/{EPOCHS_PER_GAME}  loss_pi={tot_pi/n:.4f}  loss_v={tot_v/n:.4f}")
+            total_loss_pi += L_pi.item()
+            total_loss_v += L_v.item()
+            batches += 1
+            # --- NEW: PERIODIC SAVING LOGIC ---
+            if batches > 0 and batches % SAVE_EVERY_N_BATCHES == 0:
+                # 1. Define the checkpoint path with epoch and batch number
+                ckpt_path = os.path.join(model_dir, f"ckpt_epoch_{epoch+1}_batch_{batches}.pth")
+                # 2. Save the current model state
+                torch.save(net.model.state_dict(), ckpt_path)
+                # 3. Also overwrite the 'latest' model for easy resuming
+                torch.save(net.model.state_dict(), os.path.join(model_dir, "latest.pth"))
+                # 4. Log the save event without disrupting the progress bar using tqdm.write
+                progress_bar.write(f"  -> Checkpoint saved to {ckpt_path}")
+
+            # Update the progress bar's description with the latest loss values
+            # This provides a running average, which is more stable than instantaneous loss
+            avg_loss_pi = total_loss_pi / batches
+            avg_loss_v = total_loss_v / batches
+            progress_bar.set_postfix(loss_pi=f"{avg_loss_pi:.4f}", loss_v=f"{avg_loss_v:.4f}")
+        
+        # After the epoch is complete, print a clean summary log
+        if batches > 0:
+            final_avg_loss_pi = total_loss_pi / batches
+            final_avg_loss_v = total_loss_v / batches
+            log(f"Epoch {epoch+1} Summary: Avg Policy Loss = {final_avg_loss_pi:.4f}, Avg Value Loss = {final_avg_loss_v:.4f}")
+        else:
+            log(f"Epoch {epoch+1} Summary: No data was processed.")
 
 # ---------------- 主循环 ----------------
 def main():
     net = NN_Interface(model_path=os.path.join(MODEL_DIR, "latest.pth"))
-    replay_buffer = deque(maxlen=200000)   # 经验回放缓冲
+    
+    train(net, MODEL_DIR)
+    torch.save(net.model.state_dict(), os.path.join(MODEL_DIR, "latest.pth"))
+    log(f"  已保存 latest.pth")
 
-    for game in range(1, SELFPLAY_GAMES+1):
-        log(f"\n===== 自对弈第 {game} 盘 =====")
-        examples = self_play_one_game(net, pause=False)
-        replay_buffer.extend(examples)
-        log(f"  本盘 {len(examples)} 步，缓冲共 {len(replay_buffer)} 步")
+    # replay_buffer = deque(maxlen=200000)   # 经验回放缓冲
+    # for game in range(1, SELFPLAY_GAMES+1):
+    #     log(f"\n===== 自对弈第 {game} 盘 =====")
+    #     examples = self_play_one_game(net, pause=False)
+    #     replay_buffer.extend(examples)
+    #     log(f"  本盘 {len(examples)} 步，缓冲共 {len(replay_buffer)} 步")
 
-        if len(replay_buffer) >= 10000:      # 缓冲够大再训练
-            log("  开始训练...")
-            train(net, list(replay_buffer))
+    #     if len(replay_buffer) >= 10000:      # 缓冲够大再训练
+    #         log("  开始训练...")
+    #         train(net, list(replay_buffer))
 
-        if game % CHECKPOINT_EVERY == 0:
-            path = os.path.join(MODEL_DIR, f"ckpt_{game}.pth")
-            torch.save(net.model.state_dict(), path)
-            torch.save(net.model.state_dict(), os.path.join(MODEL_DIR, "latest.pth"))
-            log(f"  已保存 {path}")
+    #     if game % CHECKPOINT_EVERY == 0:
+    #         path = os.path.join(MODEL_DIR, f"ckpt_{game}.pth")
+    #         torch.save(net.model.state_dict(), path)
+    #         torch.save(net.model.state_dict(), os.path.join(MODEL_DIR, "latest.pth"))
+    #         log(f"  已保存 {path}")
 
-        # 动态降温
-        global TAU
-        TAU = max(0.1, 1.0 - game*2/SELFPLAY_GAMES)
+    #     # 动态降温
+    #     global TAU
+    #     TAU = max(0.1, 1.0 - game*2/SELFPLAY_GAMES)
 
 if __name__ == "__main__":
     main()

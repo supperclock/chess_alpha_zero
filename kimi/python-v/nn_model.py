@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from nn_data_representation import NUM_CHANNELS, INDEX_TO_MOVE
+from nn_data_representation import NUM_CHANNELS, get_move_maps
 
 class ResidualBlock(nn.Module):
     """一个残差块，AlphaZero中的核心组件"""
@@ -36,7 +36,8 @@ class XiangqiNet(nn.Module):
         # 3. 策略头
         self.policy_conv = nn.Conv2d(num_filters, 2, kernel_size=1, stride=1, bias=False)
         self.policy_bn = nn.BatchNorm2d(2)
-        self.policy_fc = nn.Linear(2 * 10 * 9, len(INDEX_TO_MOVE))
+        self.move_to_idx, self.idx_to_move = get_move_maps()
+        self.policy_fc = nn.Linear(2 * 10 * 9, len(self.idx_to_move))
         
         # 4. 价值头
         self.value_conv = nn.Conv2d(num_filters, 1, kernel_size=1, stride=1, bias=False)

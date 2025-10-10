@@ -101,12 +101,20 @@ def create_move_maps():
 
     log(f"走法映射创建完成，总共有 {len(MOVE_TO_INDEX)} 种可能的走法。")
     #打印MOVE_TO_INDEX内容
-    for key, idx in MOVE_TO_INDEX.items():
-        log(f"{key} -> {idx}")
+    # for key, idx in MOVE_TO_INDEX.items():
+    #     log(f"{key} -> {idx}")
 
-
+def get_move_maps():
+    """
+    Ensures the move maps are initialized and returns them.
+    This is the single point of access for the move maps.
+    """
+    # Lazily initialize the maps if they haven't been created yet in this process.
+    if not MOVE_TO_INDEX:
+        create_move_maps()
+    return MOVE_TO_INDEX, INDEX_TO_MOVE
 
 
 
 # 在模块加载时自动创建映射
-create_move_maps()
+# create_move_maps()

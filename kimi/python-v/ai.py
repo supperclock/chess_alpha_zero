@@ -829,6 +829,12 @@ def convert_move_string(s):
         'from': {'x': from_x, 'y': from_y},
         'to': {'x': to_x, 'y': to_y}
     }
+
+def nn_interface(board_state, side):
+    from nn_interface import NN_Interface
+    nn_player = NN_Interface(model_path="ckpt/latest.pth") 
+    value, policy = nn_player.predict(board_state, side)
+
 # ----------------- Root Iterative Deepening using PVS -----------------
 def minimax_root(board_state, side, time_limit=TIME_LIMIT):    
     move = find_from_position(board_state, side)    

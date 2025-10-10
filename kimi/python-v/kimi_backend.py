@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import os
-from ai import minimax_root, check_game_over
+from ai import minimax_root, check_game_over, nn_interface
 from util import log
 
 app = Flask(__name__)
@@ -23,7 +23,8 @@ def ai_move():
         board_state = data['board']
         side_to_move = data['side']
             
-        best_move = minimax_root(board_state, side_to_move)
+        # best_move = minimax_root(board_state, side_to_move)
+        best_move = nn_interface(board_state, side_to_move)
         log(f"Best move: {best_move}")
         return jsonify(best_move)    
     except Exception as e:

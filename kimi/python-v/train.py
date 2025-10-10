@@ -11,7 +11,7 @@ from nn_interface import NN_Interface
 from nn_data_representation import board_to_tensor, MOVE_TO_INDEX
 from ai import (
     make_move, unmake_move, generate_moves,
-    in_check, find_general, check_game_over, copy_board
+    check_game_over, copy_board
 )
 from util import * 
 from tqdm import tqdm

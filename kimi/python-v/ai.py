@@ -830,14 +830,19 @@ def convert_move_string(s):
         'to': {'x': to_x, 'y': to_y}
     }
 
+
 def nn_interface(board_state, side):
     from nn_interface import NN_Interface
     nn_player = NN_Interface(model_path="ckpt/latest.pth") 
-    value, policy = nn_player.predict(board_state, side)
+    _, policy = nn_player.predict(board_state, side)
     # 按概率从高到低排序并打印
     sorted_policy = sorted(policy.items(), key=lambda item: item[1], reverse=True)
+    if not sorted_policy: # 确保列表非空
+        return None 
     for move, prob in sorted_policy[:5]: # 打印前5个最可能的走法
-        print(f"  - 走法: {move.to_str()}, 概率: {prob:.4f}")
+        print(f"  - 走法: {move.to_dict()}, 概率: {prob:.4f}")
+    log(sorted_policy[0][0].to_dict())
+    return sorted_policy[0][0].to_dict()
 
 # ----------------- Root Iterative Deepening using PVS -----------------
 def minimax_root(board_state, side, time_limit=TIME_LIMIT):    

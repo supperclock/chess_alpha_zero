@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import os
-from ai import minimax_root, check_game_over, nn_interface
+from ai import minimax_root, check_game_over
 from util import log
 
 app = Flask(__name__)
@@ -31,6 +31,18 @@ def ai_move():
       log(f"Error in /ai_move: {e}")
       return jsonify({"error": str(e)}), 500
 
+from nn_interface import NN_Interface
+nn_player = NN_Interface(model_path="ckpt/latest.pth") 
+def nn_interface(board_state, side):        
+    _, policy = nn_player.predict(board_state, side)
+    # 按概率从高到低排序并打印
+    sorted_policy = sorted(policy.items(), key=lambda item: item[1], reverse=True)
+    if not sorted_policy: # 确保列表非空
+        return None 
+    for move, prob in sorted_policy[:5]: # 打印前5个最可能的走法
+        print(f"  - 走法: {move.to_dict()}, 概率: {prob:.4f}")
+    log(sorted_policy[0][0].to_dict())
+    return sorted_policy[0][0].to_dict()
 @app.route('/check_game_over', methods=['POST'])
 def check_game_over_endpoint():
     try:

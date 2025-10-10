@@ -241,7 +241,7 @@ def make_loader(batch_size=512, workers=4):
 def train(net, model_dir):
     # dataset   = GameDataSet(examples)
     # loader    = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
-    loader = make_loader(batch_size=BATCH_SIZE) # Note: BATCH_SIZE is used from hyperparameters
+    loader = make_loader() # Note: BATCH_SIZE is used from hyperparameters
     optimizer = torch.optim.Adam(net.model.parameters(), lr=LR, weight_decay=1e-4)
     loss_v = nn.MSELoss()
 
@@ -299,7 +299,7 @@ def train(net, model_dir):
         if batches > 0:
             final_avg_loss_pi = total_loss_pi / batches
             final_avg_loss_v = total_loss_v / batches
-            log(f"Epoch {epoch+1} Summary: Avg Policy Loss = {final_avg_loss_pi:.4f}, Avg Value Loss = {final_avg_loss_v:.4f}")
+            log(f"Epoch {epoch+1}/batches {batches} Summary: Avg Policy Loss = {final_avg_loss_pi:.4f}, Avg Value Loss = {final_avg_loss_v:.4f}")
         else:
             log(f"Epoch {epoch+1} Summary: No data was processed.")
 

@@ -9,7 +9,7 @@ from util import *
 PROJECT = Path(__file__).resolve().parent
 import sys; sys.path.append(str(PROJECT.parent))   # 若脚本放子目录
 from ai import make_move, unmake_move, copy_board, INITIAL_SETUP, find_general
-from nn_data_representation import board_to_tensor, MOVE_TO_INDEX
+from nn_data_representation import board_to_tensor, MOVE_TO_INDEX,get_move_maps
 
 DB_FILE = PROJECT / 'chess_games.db'
 BATCH   = 1000      # 每 N 步 commit 一次
@@ -92,6 +92,7 @@ def main():
         # 2. 按 game_id 分组
         from itertools import groupby
         groups = [(k, list(g)) for k, g in groupby(todo, key=lambda r: r['game_id'])]
+        get_move_maps()
 
         buf = []
         for game_id, moves in tqdm.tqdm(groups, desc='Games'):

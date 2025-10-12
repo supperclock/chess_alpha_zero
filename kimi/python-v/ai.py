@@ -909,7 +909,7 @@ def check_game_over(board_state):
             pass
         return {'game_over': True, 'message': '黑方胜利！'}
     if not black_general:
-        log("[游戏] 游戏结束：红方胜利！")
+        # log("[游戏] 游戏结束：红方胜利！")
         try:
             from opening_book import print_opening_stats
             print_opening_stats()

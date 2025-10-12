@@ -9,6 +9,7 @@ import sqlite3, pickle, torch
 from collections import defaultdict, deque
 from nn_interface import NN_Interface
 from nn_data_representation import board_to_tensor, MOVE_TO_INDEX
+from collections import Counter # 确保在文件顶部引入
 from ai import (
     make_move, unmake_move, generate_moves,
     check_game_over, copy_board, INITIAL_SETUP
@@ -28,6 +29,7 @@ TAU              = 1.0             # 温度，前 30 步用 1.0，之后 0.1
 BATCH_SIZE       = 256
 LR               = 2e-4
 MAX_DB_ROWS      = 200000          # <<-- 新增：数据库中最多保存的局面数量 (防止无限增长)
+MAX_GAME_STEPS   = 200             # 新增：一局棋的最大步数
 DEVICE           = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 os.makedirs(MODEL_DIR, exist_ok=True)
@@ -101,10 +103,17 @@ def mcts_policy(net, board, side, simuls=MCTS_SIMULS, temperature=TAU):
             pi[move] = child.N**(1/temperature) / (sum_N or 1.0)
     return pi, root.Q
 
+def board_to_key(board, side):
+    """将棋盘和走棋方转换为一个唯一的、可哈希的键"""
+    board_tuple = tuple(tuple(str(p) for p in row) for row in board)
+    return (board_tuple, side)
 # ---------------- 自对弈 & 数据存储 (逻辑微调) ----------------
 def self_play_one_game(net):
     # (此函数基本不变，只是去掉了 pause 参数)
     board, side, examples, step = copy_board(INITIAL_SETUP), 'red', [], 0
+    position_history = Counter()
+    # 记录初始局面
+    position_history[board_to_key(board, side)] += 1
     while True:
         # 在自对弈时，温度参数控制探索程度
         temp = 1.0 if step < 30 else 0.1
@@ -119,26 +128,50 @@ def self_play_one_game(net):
         
         # 从策略中采样走棋
         moves, probs = list(pi.keys()), list(pi.values())
-        if not moves: break
+        if not moves: 
+            log("没有可移动的棋子，判当前走棋方输。")
+            if side == 'black':
+                z = -1.0
+            else:
+                z = 1.0
+            break
         move = random.choices(moves, weights=probs)[0]
         
         make_move(board, move)
         step += 1
         side = 'red' if side == 'black' else 'black'
+        log(f"第 {step} 步：{move.to_dict()}")
+
+        # --- 游戏结束判断 ---
         
+        # 1. 规则杀棋判断
         game_over = check_game_over(board)
         if game_over['game_over']:
-            log(f"对局结束：{game_over['message']}") 
-            # 游戏结束，为所有局面标注最终结果 Z
             z = 1.0 if game_over['message'][0] == '黑' else -1.0
-            final_examples = []
-            for ex in examples:
-                # 注意价值 Z 的符号取决于当前局面是哪一方
-                final_z = z if ex['side'] == 'black' else -z
-                final_examples.append((ex['tensor'], ex['pi'], final_z))
-            log(f"本局共计 {len(final_examples)} 个训练样本...")
-            return final_examples
-    return []
+            log(f"游戏结束：{game_over['message']}")
+            break
+
+        # 2. 局面重复判断 (和棋)
+        current_key = board_to_key(board, side)
+        position_history[current_key] += 1
+        if position_history[current_key] >= 3:
+            log("局面重复3次，判定为和棋。")
+            z = 0.0
+            break
+
+        # 3. 步数上限判断 (和棋)
+        if step > MAX_GAME_STEPS:
+            log(f"对局超过 {MAX_GAME_STEPS} 步，强制判为和棋。")
+            z = 0.0
+            break
+                    
+    final_examples = []    
+    for ex in examples:
+        final_z = 0.0 if z == 0.0 else (z if ex['side'] == 'black' else -z)
+        final_examples.append((ex['tensor'], ex['pi'], final_z))
+    
+    log(f"本局共计 {len(final_examples)} 个训练样本...")
+    return final_examples    
 
 # ---------------- 新增：数据库操作函数 ----------------
 def save_examples_to_db(examples):

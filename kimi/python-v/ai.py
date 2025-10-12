@@ -901,7 +901,7 @@ def check_game_over(board_state):
     red_general = find_general(board_state, 'red')
     black_general = find_general(board_state, 'black')
     if not red_general:
-        log("[游戏] 游戏结束：黑方胜利！")
+        # log("[游戏] 游戏结束：黑方胜利！")
         try:
             from opening_book import print_opening_stats
             print_opening_stats()

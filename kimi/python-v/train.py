@@ -240,6 +240,7 @@ def main():
         
         # 1. 自对弈生成数据        
         for i in tqdm(range(GAMES_PER_CYCLE), desc=f"自对弈循环 ({game_num+1}-{game_num+GAMES_PER_CYCLE})"):
+            log(f"开始第 {game_num+1} 局对弈...")
             examples_one_game = self_play_one_game(net)            
             save_examples_to_db(examples_one_game)     
             log(f"保存 {len(examples_one_game)} 个训练样本到数据库中...")     

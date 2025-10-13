@@ -23,8 +23,8 @@ def ai_move():
     board_state = data['board']
     side_to_move = data['side']
         
-    # best_move = minimax_root(board_state, side_to_move)
-    best_move = nn_interface(board_state, side_to_move)
+    best_move = minimax_root(board_state, side_to_move)
+    # best_move = nn_interface(board_state, side_to_move)
     log(f"Best move: {best_move}")
     return jsonify(best_move)    
     

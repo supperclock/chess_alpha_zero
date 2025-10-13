@@ -117,8 +117,8 @@ def insert_file_ids_to_db(conn, file_ids):
 
 def main():
     # -------------------------- 请根据实际情况修改以下路径 --------------------------
-    HTML_FILE_DIR = "D:/chinese-chess-qp/www.xqipu.com/eventqipu"  # 你的HTML文件路径
-    DB_FILE_PATH = "D:/ai-chinese-chess/chess_alpha_zero/kimi/python-v/chess_games.db"          # 数据库文件路径
+    HTML_FILE_DIR = "D:/qipu/qipu"  # 你的HTML文件路径
+    DB_FILE_PATH = "chess_games.db"          # 数据库文件路径
     # ---------------------------------------------------------------------------------
      # 1. 初始化数据库（创建表和触发器）
     conn = init_database(DB_FILE_PATH)
@@ -127,16 +127,15 @@ def main():
         return
     
     # 2. 遍历HTML_FILE_DIR目录下的所有文件
-    for root, dirs, files in os.walk(HTML_FILE_DIR):
+    file_ids = []
+    for _, _, files in os.walk(HTML_FILE_DIR):
         for file in files:            
-            file_path = os.path.join(root, file)
-            print(f"正在处理文件：{file_path}")
-            file_ids = extract_file_ids_from_html(file_path)
-            if not file_ids:
-                print(f"文件处理失败：{file_path}")
-             # 3. 批量插入file_id到数据库
-            insert_file_ids_to_db(conn, file_ids)    
+            #获取文件名
+            file_name = os.path.splitext(file)[0]
+            file_ids.append(file_name)
+            
     # 3. 关闭数据库连接
+    insert_file_ids_to_db(conn, file_ids)    
     conn.close()
     print("流程结束：数据库连接已关闭")
 

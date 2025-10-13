@@ -11,7 +11,7 @@ from opening_book import find_from_position, Move
 from util import *
 
 # --- Configuration ---
-MAX_DEPTH = 2
+MAX_DEPTH = 3
 TIME_LIMIT = 100.0
 MIN_TIME_LEFT = 0.5
 
@@ -833,10 +833,10 @@ def convert_move_string(s):
 
 # ----------------- Root Iterative Deepening using PVS -----------------
 def minimax_root(board_state, side, time_limit=TIME_LIMIT):    
-    move = find_from_position(board_state, side)    
-    if move:
-        log("[搜索] 棋谱库命中，直接返回棋谱走法"+move)
-        return convert_move_string(move)
+    # move = find_from_position(board_state, side)    
+    # if move:
+    #     log("[搜索] 棋谱库命中，直接返回棋谱走法"+move)
+    #     return convert_move_string(move)
         #将move格式由字符串"Move(from_x=1, from_y=2, to_x=4, to_y=2)"改为{'from': {'y': 7, 'x': 7}, 'to': {'y': 7, 'x': 6}}                
         # rlt = convert_move_string(move)
         # log(f"[搜索] 格式转换后：{rlt}")
@@ -852,7 +852,7 @@ def minimax_root(board_state, side, time_limit=TIME_LIMIT):
     best_val = -MATE_SCORE - 1
     color_multiplier = 1 if side == 'black' else -1
 
-    for depth in range(2, MAX_DEPTH + 1):
+    for depth in range(3, MAX_DEPTH + 1):
         time_spent = time.time() - start_time
         if time_spent > time_limit * 0.98:
             break
@@ -866,7 +866,7 @@ def minimax_root(board_state, side, time_limit=TIME_LIMIT):
             moves = generate_moves(board_state, side, depth=0)            
 
             for m in moves:
-                log(f"[搜索] 迭代深度 {depth}，当前走法: {m.to_dict()}")
+                # log(f"[搜索] 迭代深度 {depth}，当前走法: {m.to_dict()}")
                 captured = make_move(board_state, m)
                 try:
                     val = -pvs_search(board_state, depth-1, -beta, -alpha, 'red' if side=='black' else 'black', -color_multiplier, 1, start_time, time_limit * 0.95)

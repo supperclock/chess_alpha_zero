@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-AlphaZero-style 自对弈循环训练脚本（中国象棋）
+AlphaZero-style 自对弈循环训练脚本（中国象棋）- 带模型评估
 """
 import os, time, random, json, torch, torch.nn as nn
 from torch.utils.data import IterableDataset, DataLoader
-import sqlite3, pickle, torch
+import sqlite3, pickle, torch, shutil
 from collections import defaultdict, deque
 from nn_interface import NN_Interface
 from nn_data_representation import board_to_tensor, MOVE_TO_INDEX
-from collections import Counter # 确保在文件顶部引入
+from collections import Counter
 from ai import (
     make_move, unmake_move, generate_moves,
     check_game_over, copy_board, INITIAL_SETUP
@@ -17,20 +17,25 @@ from ai import (
 from util import * 
 from tqdm import tqdm
 
-# ---------------- 超参数 (修改和新增) ----------------
-MODEL_DIR        = "ckpt"          # 权重保存目录
-DB_PATH          = 'chess_games.db' # 数据库文件路径
-TOTAL_GAMES      = 50000           # <<-- 修改：整个训练过程要产生的总对局数
-GAMES_PER_CYCLE  = 25              # <<-- 修改：每产生 N 盘对局，就启动一次训练
-EPOCHS_PER_CYCLE = 2               # <<-- 新增：每次训练时，在当前数据集上迭代的轮数
-MCTS_SIMULS      = 400             # 每步 MCTS 模拟次数
+# ---------------- 超参数 ----------------
+MODEL_DIR        = "ckpt"
+DB_PATH          = 'chess_games.db'
+TOTAL_GAMES      = 50000
+GAMES_PER_CYCLE  = 100             # <<-- 建议增加
+EPOCHS_PER_CYCLE = 2
+MCTS_SIMULS      = 400
 C_PUCT           = 2.0
-TAU              = 1.0             # 温度，前 30 步用 1.0，之后 0.1
+TAU              = 1.0
 BATCH_SIZE       = 256
-LR               = 2e-4
-MAX_DB_ROWS      = 200000          # <<-- 新增：数据库中最多保存的局面数量 (防止无限增长)
-MAX_GAME_STEPS   = 200             # 新增：一局棋的最大步数
+LR               = 5e-5            # <<-- 建议降低
+MAX_DB_ROWS      = 200000
+MAX_GAME_STEPS   = 200
 DEVICE           = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# --- 新增：评估阶段超参数 ---
+EVALUATE_GAMES   = 40              # 每次评估时，新旧模型对战的局数
+EVALUATE_WIN_RATE = 0.55           # 新模型胜率超过此阈值，才能被接受
+MCTS_SIMULS_EVAL = 100             # 评估时 MCTS 模拟次数可以少一些，以加快速度
 
 os.makedirs(MODEL_DIR, exist_ok=True)
 
@@ -107,61 +112,45 @@ def board_to_key(board, side):
     """将棋盘和走棋方转换为一个唯一的、可哈希的键"""
     board_tuple = tuple(tuple(str(p) for p in row) for row in board)
     return (board_tuple, side)
-# ---------------- 自对弈 & 数据存储 (逻辑微调) ----------------
+    
+# ---------------- 自对弈 & 数据存储 (保持不变) ----------------
 def self_play_one_game(net):
-    # (此函数基本不变，只是去掉了 pause 参数)
     board, side, examples, step = copy_board(INITIAL_SETUP), 'red', [], 0
     position_history = Counter()
-    # 记录初始局面
     position_history[board_to_key(board, side)] += 1
+    z = 0.0 # Default to draw
+
     while True:
-        # 在自对弈时，温度参数控制探索程度
         temp = 1.0 if step < 30 else 0.1
         pi, v = mcts_policy(net, board, side, temperature=temp)
-        
-        # 存储训练样本
         tensor, pi_vec = board_to_tensor(board, side).squeeze(0), torch.zeros(len(MOVE_TO_INDEX))
         for move, prob in pi.items():
             key = (move.fy, move.fx, move.ty, move.tx)
             if key in MOVE_TO_INDEX: pi_vec[MOVE_TO_INDEX[key]] = prob
         examples.append({'tensor': tensor, 'pi': pi_vec, 'side': side})
         
-        # 从策略中采样走棋
         moves, probs = list(pi.keys()), list(pi.values())
         if not moves: 
-            log("没有可移动的棋子，判当前走棋方输。")
-            if side == 'black':
-                z = -1.0
-            else:
-                z = 1.0
+            z = -1.0 if side == 'black' else 1.0
             break
         move = random.choices(moves, weights=probs)[0]
         
         make_move(board, move)
         step += 1
         side = 'red' if side == 'black' else 'black'
-        log(f"第 {step} 步：{move.to_dict()}")
 
-        # --- 游戏结束判断 ---
-        
-        # 1. 规则杀棋判断
         game_over = check_game_over(board)
         if game_over['game_over']:
             z = 1.0 if game_over['message'][0] == '黑' else -1.0
-            log(f"游戏结束：{game_over['message']}")
             break
 
-        # 2. 局面重复判断 (和棋)
         current_key = board_to_key(board, side)
         position_history[current_key] += 1
         if position_history[current_key] >= 3:
-            log("局面重复3次，判定为和棋。")
             z = 0.0
             break
 
-        # 3. 步数上限判断 (和棋)
         if step > MAX_GAME_STEPS:
-            log(f"对局超过 {MAX_GAME_STEPS} 步，强制判为和棋。")
             z = 0.0
             break
                     
@@ -169,11 +158,8 @@ def self_play_one_game(net):
     for ex in examples:
         final_z = 0.0 if z == 0.0 else (z if ex['side'] == 'black' else -z)
         final_examples.append((ex['tensor'], ex['pi'], final_z))
-    
-    log(f"本局共计 {len(final_examples)} 个训练样本...")
     return final_examples    
 
-# ---------------- 新增：数据库操作函数 ----------------
 def save_examples_to_db(examples):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -184,28 +170,23 @@ def save_examples_to_db(examples):
                     (pickle.dumps(tensor), pickle.dumps(pi), z))
     conn.commit()
     
-    # 数据库裁剪，防止无限增大
     cur.execute("SELECT COUNT(*) FROM self_play_moves")
     count = cur.fetchone()[0]
     if count > MAX_DB_ROWS:
         num_to_delete = count - MAX_DB_ROWS
         log(f"数据库达到上限 {MAX_DB_ROWS}，正在删除最旧的 {num_to_delete} 条记录...")
-        # 注意: 'rowid' 是 sqlite 的隐藏自增列
-        cur.execute(f"DELETE FROM self_play_moves WHERE rowid IN (SELECT rowid FROM moves ORDER BY rowid ASC LIMIT {num_to_delete})")
+        cur.execute(f"DELETE FROM self_play_moves WHERE rowid IN (SELECT rowid FROM self_play_moves ORDER BY rowid ASC LIMIT {num_to_delete})")
         conn.commit()
         log("删除完成。")
 
     conn.close()
     
-# ---------------- 数据集 (简化) ----------------
 class SQLiteChessDataset(IterableDataset):
     def __init__(self, db_path):
         self.db_path = db_path
-
     def __iter__(self):
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        # 在自对弈循环中，我们通常在整个数据集上随机训练
         sql = "SELECT tensor, pi, z FROM self_play_moves WHERE tensor IS NOT NULL ORDER BY RANDOM()"
         cur = conn.execute(sql)
         for row in cur:
@@ -214,15 +195,14 @@ class SQLiteChessDataset(IterableDataset):
                    torch.tensor(row['z'], dtype=torch.float32))
         conn.close()
 
-# ---------------- 训练函数 (简化，移除早停) ----------------
+# ---------------- 训练函数 (保持不变) ----------------
 def train(net, model_dir):
     log("="*20 + " 训练阶段 " + "="*20)
     dataset = SQLiteChessDataset(DB_PATH)
-    # 如果数据量太少，可以跳过训练
     with sqlite3.connect(DB_PATH) as conn:
         try:
             total_rows = conn.execute("SELECT COUNT(*) FROM self_play_moves").fetchone()[0]
-            if total_rows < BATCH_SIZE * 10: # 至少有10个batch的数据
+            if total_rows < BATCH_SIZE * 10:
                 log(f"数据量过少 ({total_rows} 条)，跳过本次训练。")
                 return
         except sqlite3.OperationalError:
@@ -242,15 +222,12 @@ def train(net, model_dir):
         for board_tensor, pi_vec, z in progress_bar:
             board_tensor, pi_vec, z = board_tensor.to(DEVICE), pi_vec.to(DEVICE), z.to(DEVICE)
             pred_pi, pred_v = net.model(board_tensor)
-            
             L_pi = -torch.sum(pi_vec * torch.log_softmax(pred_pi, dim=1), dim=1).mean()
             L_v = loss_v(pred_v.squeeze(), z)
             loss = L_pi + L_v
-
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
             total_loss_pi += L_pi.item()
             total_loss_v += L_v.item()
             batches += 1
@@ -259,30 +236,114 @@ def train(net, model_dir):
             avg_loss_v = total_loss_v / batches
             progress_bar.set_postfix(loss_pi=f"{avg_loss_pi:.4f}", loss_v=f"{avg_loss_v:.4f}")
             
-    log(f"训练完成。保存最新模型到 {os.path.join(model_dir, 'latest.pth')}")
+    log(f"训练完成。保存挑战者模型到 {os.path.join(model_dir, 'latest.pth')}")
     torch.save(net.model.state_dict(), os.path.join(model_dir, "latest.pth"))
+
+
+# ---------------- 新增：模型评估函数 ----------------
+def evaluate_models(candidate_net, best_net, num_games):
+    log("="*20 + " 评估阶段 " + "="*20)
+    candidate_wins = 0
+    
+    for i in tqdm(range(num_games), desc="模型评估对战"):
+        # 为了公平，轮流执红
+        if i % 2 == 0:
+            red_player, black_player = candidate_net, best_net
+        else:
+            red_player, black_player = best_net, candidate_net
+            
+        board = copy_board(INITIAL_SETUP)
+        side = 'red'
+        step = 0
+        position_history = Counter()
+        position_history[board_to_key(board, side)] += 1
+        
+        while True:
+            current_player = red_player if side == 'red' else black_player
+            # 评估时 temperature=0，总是选择最优走法
+            pi, _ = mcts_policy(current_player, board, side, simuls=MCTS_SIMULS_EVAL, temperature=0.0)
+            
+            moves = list(pi.keys())
+            if not moves:
+                # 当前方无棋可走，判负
+                winner = 'black' if side == 'red' else 'red'
+                break
+            
+            # 选择访问次数最多的走法
+            best_move = max(pi.items(), key=lambda item: item[1])[0]
+            make_move(board, best_move)
+            side = 'red' if side == 'black' else 'black'
+            step += 1
+            
+            game_over = check_game_over(board)
+            if game_over['game_over']:
+                winner = 'black' if game_over['message'][0] == '黑' else 'red'
+                break
+
+            current_key = board_to_key(board, side)
+            position_history[current_key] += 1
+            if position_history[current_key] >= 3 or step > MAX_GAME_STEPS:
+                winner = 'draw'
+                break
+        
+        # 计分
+        if winner == 'draw':
+            candidate_wins += 0.5
+        elif (winner == 'red' and red_player == candidate_net) or \
+             (winner == 'black' and black_player == candidate_net):
+            candidate_wins += 1
+            
+    return candidate_wins / num_games
+
 
 # ---------------- 主循环 (核心修改) ----------------
 def main():
-    # 初始化或加载最新模型
-    net = NN_Interface(model_path=os.path.join(MODEL_DIR, "latest.pth"))
+    latest_path = os.path.join(MODEL_DIR, "latest.pth")
+    best_path = os.path.join(MODEL_DIR, "best.pth")
+
+    # --- 初始化模型 ---
+    # 如果 best.pth 不存在，说明是第一次运行，将 latest.pth 复制为 best.pth
+    if not os.path.exists(best_path) and os.path.exists(latest_path):
+        log(f"未找到冠军模型 (best.pth)，将初始模型 {latest_path} 设为冠军。")
+        shutil.copyfile(latest_path, best_path)
+
+    # 加载两个模型
+    # best_net 用于生成数据，candidate_net 用于训练和挑战
+    best_net = NN_Interface(model_path=best_path)
+    candidate_net = NN_Interface(model_path=latest_path)
     
     game_num = 0
-    while game_num < TOTAL_GAMES:
-        log("="*20 + " 自对弈阶段 " + "="*20)
+    # 尝试从数据库获取已有的游戏数量
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            game_num = conn.execute("SELECT COUNT(DISTINCT game_id) FROM moves").fetchone()[0] # 假设你有 game_id
+    except: # 如果表或列不存在，从0开始
+        game_num = 0
         
-        # 1. 自对弈生成数据        
+    while game_num < TOTAL_GAMES:
+        # 1. 自对弈阶段：使用 best_net 生成数据
+        log("="*20 + f" 自对弈阶段 (使用模型: {best_path}) " + "="*20)
         for i in tqdm(range(GAMES_PER_CYCLE), desc=f"自对弈循环 ({game_num+1}-{game_num+GAMES_PER_CYCLE})"):
-            log(f"开始第 {game_num+1} 局对弈...")
-            examples_one_game = self_play_one_game(net)            
-            save_examples_to_db(examples_one_game)     
-            log(f"保存 {len(examples_one_game)} 个训练样本到数据库中...")     
-            game_num += 1                
+            examples_one_game = self_play_one_game(best_net)
+            if examples_one_game:
+                save_examples_to_db(examples_one_game)
+            game_num += 1
 
-        # 3. 训练网络
-        # NN_Interface 会在每次使用时自动加载最新的 'latest.pth'
-        # 所以我们只需要调用 train 函数即可
-        train(net, MODEL_DIR)
+        # 2. 训练阶段：训练 candidate_net
+        train(candidate_net, MODEL_DIR)
+
+        # 3. 评估阶段：candidate_net 挑战 best_net
+        win_rate = evaluate_models(candidate_net, best_net, EVALUATE_GAMES)
+        log(f"评估完成。挑战者模型胜率: {win_rate:.2%}")
+
+        if win_rate > EVALUATE_WIN_RATE:
+            log(f"挑战成功！新模型成为冠军。胜率 {win_rate:.2%} > {EVALUATE_WIN_RATE:.2%}")
+            # 更新 best.pth
+            shutil.copyfile(latest_path, best_path)
+            # best_net 实例也需要重新加载模型
+            best_net = NN_Interface(model_path=best_path)
+        else:
+            log(f"挑战失败。继续使用旧的冠军模型。胜率 {win_rate:.2%} <= {EVALUATE_WIN_RATE:.2%}")
 
     log(f"已完成全部 {TOTAL_GAMES} 局对弈训练。")
 

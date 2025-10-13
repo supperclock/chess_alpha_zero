@@ -141,20 +141,21 @@ def parse_chess_html(file_path, db_cursor=None):
     
     return True  # 返回True表示已处理
 
-
+from tqdm import tqdm
 if __name__ == "__main__":
     # 示例用法
     # 解析单个文件
     # parse_chess_html('0000baa8-6d3b-4d0d-a88e-fb908b5a98d0')
     
     # 批量解析当前目录下的所有HTML文件
-    dir = 'D:\\chinese-chess-qp\\www.xqipu.com\\qipu\\'
+    dir = 'D:/qipu/qipu'
     # 连接数据库检查是否已存在该源文件的记录
     conn = sqlite3.connect('chess_games.db')
     cursor = conn.cursor()
     # 从数据库表qipu_file_ids中获取file_id，每次取100条
-    cursor.execute('SELECT file_id FROM qipu_file_ids WHERE tag = 0 LIMIT 2000')
+    cursor.execute('SELECT file_id FROM qipu_file_ids WHERE tag = 0 LIMIT 40000')
     file_ids = cursor.fetchall()
+    #增加进度显示
     for file_id in file_ids:
         file_path = os.path.join(dir, file_id[0])    
         parse_chess_html(file_path, cursor) 

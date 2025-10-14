@@ -46,8 +46,9 @@ def parse_fen(fen):
     board = [[None for _ in range(9)] for _ in range(10)]
 
     # 自动检测FEN的方向（红上或黑上）
-    first_piece_char = next((char for char in rows[0] if char.isalpha()), None)
-    is_standard_fen = first_piece_char is not None and first_piece_char.islower()
+    # first_piece_char = next((char for char in rows[0] if char.isalpha()), None)
+    # is_standard_fen = first_piece_char is not None and first_piece_char.islower()
+    is_standard_fen = True
     
     for y, row_str in enumerate(rows):
         # 确定正确的垂直方向（行）索引
@@ -89,6 +90,7 @@ class XiangqiGame:
             self.current_player = 'red'
         else:
             self.board, self.current_player = parse_fen(init_fen)
+            # self.print_board()
 
     def print_board(self):
         print("   a  b  c  d  e  f  g  h  i  (列)")

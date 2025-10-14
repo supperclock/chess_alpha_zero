@@ -3,10 +3,22 @@ from collections import defaultdict
 from chess_parser import XiangqiGame,INITIAL_SETUP
 from util import compute_zobrist, init_zobrist
 
+# ---------- 初始化 ----------
+init_zobrist()
+
+DB_PATH = 'chess_games.db'
+
+# ---------- 每盘棋内部缓存结构 ----------
+# key = (zobrist_hash, best_move)
+# value = {'visits', 'red_wins', 'black_wins', 'draws'}
+PositionCache = lambda: defaultdict(lambda: {
+    'visits': 0,
+    'red_wins': 0,
+    'black_wins': 0,
+    'draws': 0
+})
+
 def generate_positions(db_path='chess_games.db'):
-    """Generate positions table data from games and moves tables"""
-    # Initialize Zobrist hashing
-    init_zobrist()
     
     # Connect to database
     conn = sqlite3.connect(db_path)
@@ -14,7 +26,7 @@ def generate_positions(db_path='chess_games.db'):
     
     # Get all games
     sql = """
-        SELECT game_id, result,init_fen FROM games where result IN ('红先胜', '红先负', '红先和') and game_id > 5013 order by game_id
+        SELECT game_id, result,init_fen FROM games where tag =0 order by game_id
     """
     cursor.execute(sql)
     games = cursor.fetchall()    
@@ -44,42 +56,70 @@ def generate_positions(db_path='chess_games.db'):
         ''', (game_id,))
         
         moves = cursor.fetchall()   
+        # 逐着推演，缓存局面
+        cache = PositionCache()
        
         # Process each move
         for move_str in moves:      
-            zobrist_hash = compute_zobrist(game.board, game.current_player)                     
-            rlt, move = game.move(move_str[0],game_id)                      
-            if not rlt:
-                print("由于上一步走棋失败，棋局终止。")
+            zobrist_hash = compute_zobrist(game.board, game.current_player)        
+            try:             
+                rlt, move = game.move(move_str[0],game_id)                      
+                if not rlt:
+                    print("由于上一步走棋失败，棋局终止。")
+                    cursor.execute('update games set tag=2 where game_id=?',(game_id,))
+                    conn.commit()
+                    break
+                key = (str(zobrist_hash), str(move))
+                cache[key]['visits'] += 1
+                cache[key]['red_wins'] += red_result
+                cache[key]['black_wins'] += black_result
+                cache[key]['draws'] += draw_result    
+            except Exception:            
+                cursor.execute('update games set tag=2 where game_id=?',(game_id,))
+                conn.commit()
                 break
-            insert_position(str(zobrist_hash), game_id, str(move), 1, red_result, black_result, draw_result)                                           
+        # 一盘棋结束，批量写库
+        flush_positions(game_id, cache)                                    
 
-def insert_position(zobrist_hash, game_id, best_move, visits, red_wins, black_wins, draws):
-    """Insert a position into the database"""
-    conn = sqlite3.connect('chess_games.db')
+# ---------- 单盘棋落库 ----------
+def flush_positions(game_id: int, cache: dict):
+    """
+    把一盘棋产生的所有局面一次性写进 positions 表
+    """
+    if not cache:          # 空缓存直接返回
+        return
+
+    data = [
+        (
+            zobrist,
+            best_move,
+            stats['visits'],
+            stats['red_wins'],
+            stats['black_wins'],
+            stats['draws'],
+            str(game_id)     # 用于拼接 game_ids
+        )
+        for (zobrist, best_move), stats in cache.items()
+    ]
+
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    sql = '''INSERT INTO positions 
-        (zobrist, game_ids, best_move, visits, red_wins, black_wins, draws)
+
+    # 批量 Upsert
+    sql = """
+        INSERT INTO positions (zobrist, best_move, visits,
+                               red_wins, black_wins, draws, game_ids)
         VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(zobrist, best_move) DO UPDATE SET
-            visits = visits + 1,
-            red_wins = red_wins + excluded.red_wins,
+            visits     = visits + excluded.visits,
+            red_wins   = red_wins + excluded.red_wins,
             black_wins = black_wins + excluded.black_wins,
-            draws = draws + excluded.draws,
-            game_ids = game_ids || '-' || excluded.game_ids
-    '''
-    #如果zobrist和best_move已经存在，则更新visits+1,red_wins+red_wins, black_wins+black_wins, draws+draws
-    cursor.execute(sql,  (
-        zobrist_hash,
-        game_id,
-        best_move,
-        visits,
-        red_wins,
-        black_wins,
-        draws        
-    )
-    )
-    # Commit changes and close connection
+            draws      = draws + excluded.draws,
+            game_ids   = game_ids || '-' || excluded.game_ids
+    """
+    cursor.executemany(sql, data)
+    conn.commit()
+    cursor.execute('update games set tag=1 where game_id=?',(game_id,))
     conn.commit()
     conn.close()
 

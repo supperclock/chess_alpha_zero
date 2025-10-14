@@ -7,6 +7,23 @@
 // 用于启发式搜索，如杀手走法。MAX_SEARCH_DEPTH需要足够大。
 #define MAX_SEARCH_DEPTH 32
 static Move killer_moves[MAX_SEARCH_DEPTH][2];
+static const int PIECE_VALUES[] = {
+    0,         // EMPTY
+    MATE_SCORE, // r_king
+    200,       // r_advisor
+    200,       // r_elephant
+    450,       // r_horse
+    900,       // r_chariot
+    800,       // r_cannon
+    100,       // r_pawn
+    MATE_SCORE, // b_king
+    200,       // b_advisor
+    200,       // b_elephant
+    450,       // b_horse
+    900,       // b_chariot
+    800,       // b_cannon
+    100        // b_pawn
+};
 
 // 用于时间管理
 static clock_t start_time;

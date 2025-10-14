@@ -3,6 +3,7 @@ from flask_cors import CORS
 import os
 from ai import minimax_root, check_game_over
 from util import log
+from ai_bridge import find_best_move_c
 
 app = Flask(__name__)
 CORS(app)
@@ -23,7 +24,8 @@ def ai_move():
     board_state = data['board']
     side_to_move = data['side']
         
-    best_move = minimax_root(board_state, side_to_move)
+    # best_move = minimax_root(board_state, side_to_move)
+    best_move = find_best_move_c(board_state, side_to_move, 50)
     # best_move = nn_interface(board_state, side_to_move)
     log(f"Best move: {best_move}")
     return jsonify(best_move)    

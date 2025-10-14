@@ -1,4 +1,5 @@
 #include "chess.h"
+#include <stddef.h> 
 
 // --- 评估常量和位置表 (PST) ---
 

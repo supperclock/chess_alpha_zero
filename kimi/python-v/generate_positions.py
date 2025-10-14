@@ -35,51 +35,46 @@ def generate_positions(db_path='chess_games.db'):
     #显示进度
     for game_id, result,init_fen in games:        
         print("Processing game: %s" % game_id)
-        game = XiangqiGame(init_fen)
-        # Determine result values
-        red_result = 0  # Loss
-        black_result = 0  # Loss
-        draw_result = 0
-        if result == '红先胜':
-            red_result = 1  # Win
-        elif result == '红先负':
-            black_result = 1  # Win
-        elif result == '红先和':
-            draw_result = 1
-        
-        # Get moves for this game
-        cursor.execute('''
-            SELECT iccs 
-            FROM moves 
-            WHERE game_id = ? 
-            ORDER BY move_index
-        ''', (game_id,))
-        
-        moves = cursor.fetchall()   
-        # 逐着推演，缓存局面
-        cache = PositionCache()
-       
-        # Process each move
-        for move_str in moves:      
-            zobrist_hash = compute_zobrist(game.board, game.current_player)        
-            try:             
+        try:   
+            game = XiangqiGame(init_fen)
+            # Determine result values
+            red_result = 0  # Loss
+            black_result = 0  # Loss
+            draw_result = 0
+            if result == '红先胜':
+                red_result = 1  # Win
+            elif result == '红先负':
+                black_result = 1  # Win
+            elif result == '红先和':
+                draw_result = 1
+            
+            # Get moves for this game
+            cursor.execute('''
+                SELECT iccs 
+                FROM moves 
+                WHERE game_id = ? 
+                ORDER BY move_index
+            ''', (game_id,))
+            
+            moves = cursor.fetchall()   
+            # 逐着推演，缓存局面
+            cache = PositionCache()
+            # Process each move
+            for move_str in moves:      
+                zobrist_hash = compute_zobrist(game.board, game.current_player)        
                 rlt, move = game.move(move_str[0],game_id)                      
                 if not rlt:
-                    print("由于上一步走棋失败，棋局终止。")
-                    cursor.execute('update games set tag=2 where game_id=?',(game_id,))
-                    conn.commit()
-                    break
+                    raise ValueError(f"由于上一步走棋失败，棋局终止。")
                 key = (str(zobrist_hash), str(move))
                 cache[key]['visits'] += 1
                 cache[key]['red_wins'] += red_result
                 cache[key]['black_wins'] += black_result
-                cache[key]['draws'] += draw_result    
-            except Exception:            
+                cache[key]['draws'] += draw_result     
+            # 一盘棋结束，批量写库
+            flush_positions(game_id, cache)   
+        except Exception:            
                 cursor.execute('update games set tag=2 where game_id=?',(game_id,))
-                conn.commit()
-                break
-        # 一盘棋结束，批量写库
-        flush_positions(game_id, cache)                                    
+                conn.commit()                          
 
 # ---------- 单盘棋落库 ----------
 def flush_positions(game_id: int, cache: dict):

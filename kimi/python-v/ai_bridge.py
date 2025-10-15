@@ -108,6 +108,7 @@ def python_to_c_board(board_py, side_py):
 
 def c_move_to_python_dict(c_move):
     """将 C 的 Move 结构体转换为 Python 的字典格式。"""
+    if c_move.from_x == c_move.to_x and c_move.from_y == c_move.to_y: return None
     return {
         'from': {'y': c_move.from_y, 'x': c_move.from_x},
         'to': {'y': c_move.to_y, 'x': c_move.to_x}
@@ -115,7 +116,7 @@ def c_move_to_python_dict(c_move):
 
 # --- 5. 创建新的顶层AI入口函数 ---
 
-def find_best_move_c(board_state_py, side_py, max_depth=16, time_limit=5.0):
+def find_best_move_c(board_state_py, side_py, max_depth=16, time_limit=50.0):
     """
     这是新的AI入口函数，它将替换掉 Python ai.py 中的 minimax_root。
     

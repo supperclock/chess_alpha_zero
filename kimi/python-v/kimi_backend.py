@@ -23,9 +23,12 @@ def ai_move():
         
     board_state = data['board']
     side_to_move = data['side']
-        
-    # best_move = minimax_root(board_state, side_to_move)
-    best_move = find_best_move_c(board_state, side_to_move, 50)
+    #python与c版对弈
+    if side_to_move == 'red':
+        best_move = minimax_root(board_state, side_to_move)
+    else:
+        best_move = find_best_move_c(board_state, side_to_move, 50)
+    
     # best_move = nn_interface(board_state, side_to_move)
     log(f"Best move: {best_move}")
     return jsonify(best_move)    

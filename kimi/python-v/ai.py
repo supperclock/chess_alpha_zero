@@ -833,14 +833,10 @@ def convert_move_string(s):
 
 # ----------------- Root Iterative Deepening using PVS -----------------
 def minimax_root(board_state, side, time_limit=TIME_LIMIT):    
-    # move = find_from_position(board_state, side)    
-    # if move:
-    #     log("[搜索] 棋谱库命中，直接返回棋谱走法"+move)
-    #     return convert_move_string(move)
-        #将move格式由字符串"Move(from_x=1, from_y=2, to_x=4, to_y=2)"改为{'from': {'y': 7, 'x': 7}, 'to': {'y': 7, 'x': 6}}                
-        # rlt = convert_move_string(move)
-        # log(f"[搜索] 格式转换后：{rlt}")
-        # return rlt
+    move = find_from_position(board_state, side)    
+    if move:
+        log("[搜索] 棋谱库命中，直接返回棋谱走法"+move)
+        return convert_move_string(move)
 
     log(f"[搜索] Root PVS 开始，执棋方: {side}")
     moves = generate_moves(board_state, side)

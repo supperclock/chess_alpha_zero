@@ -131,8 +131,10 @@ def main():
         print("正在为每个棋局准备任务...")
         worker_args = []
         for game_id, moves in tqdm.tqdm(groups, desc='准备任务'):
+            # Convert each sqlite3.Row object into a standard dictionary. Dictionaries are picklable.
+            moves_as_dicts = [dict(row) for row in moves]
             z = compute_z(game_id, conn)
-            worker_args.append((game_id, moves, z))
+            worker_args.append((game_id, moves_as_dicts, z))
 
         # 4. 创建并运行进程池
         # 使用 os.cpu_count() 来自动确定进程数，可以减1以保留一个核心给系统

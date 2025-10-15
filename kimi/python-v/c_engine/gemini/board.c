@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "chess.h"
 
+#define is_inside(y, x) (x >= 0 && x < COLS && y >= 0 && y < ROWS)
 // 1. C 语言版本的棋盘初始布局
 // 使用 static const 确保这个数据是只读的，并且只在当前文件内可见。
 static const Piece INITIAL_BOARD[ROWS][COLS] = {

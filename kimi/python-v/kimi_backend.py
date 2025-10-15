@@ -27,7 +27,7 @@ def ai_move():
     if side_to_move == 'red':
         best_move = minimax_root(board_state, side_to_move)
     else:
-        best_move = find_best_move_c(board_state, side_to_move, 50)
+        best_move = find_best_move_c(board_state, side_to_move, 5)
     
     # best_move = nn_interface(board_state, side_to_move)
     log(f"Best move: {best_move}")

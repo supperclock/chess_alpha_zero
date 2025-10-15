@@ -116,7 +116,7 @@ def c_move_to_python_dict(c_move):
 
 # --- 5. 创建新的顶层AI入口函数 ---
 
-def find_best_move_c(board_state_py, side_py, max_depth=16, time_limit=10.0):
+def find_best_move_c(board_state_py, side_py, max_depth=16, time_limit=5):
     """
     这是新的AI入口函数，它将替换掉 Python ai.py 中的 minimax_root。
     

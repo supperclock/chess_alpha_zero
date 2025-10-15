@@ -58,25 +58,33 @@ def str_to_move(iccs_str):
     return Move(from_y, from_x, to_y, to_x)
 def process_game(game_id, moves, conn):
     """moves: List[Row] 同一盘棋按 move_index 排序"""
-    board = copy_board(INITIAL_SETUP)
-    side  = 'red'
-    z     = compute_z(game_id, conn)
-    for row in moves:
-        move = str_to_move(row['iccs'])
-        log(f"{game_id}:{row['iccs']}:{row['move_index']}: {side}: {move.to_dict()}")
+    try:
+        board = copy_board(INITIAL_SETUP)
+        side  = 'red'
+        z     = compute_z(game_id, conn)
+        for row in moves:
+            move = str_to_move(row['iccs'])
+            log(f"{game_id}:{row['iccs']}:{row['move_index']}: {side}: {move.to_dict()}")
 
-        # 计算 tensor（走子前的局面）
-        tensor = board_to_tensor(board, side).squeeze(0)
-        pi     = build_pi(move)
-        # 落子
-        make_move(board, move)
-        side = 'red' if side == 'black' else 'black'
-        # 保存
-        yield (pickle.dumps(tensor),
-              pickle.dumps(pi),
-              z,
-              row['game_id'],
-              row['move_index'])
+            # 计算 tensor（走子前的局面）
+            tensor = board_to_tensor(board, side).squeeze(0)
+            pi     = build_pi(move)
+            # 落子
+            make_move(board, move)
+            side = 'red' if side == 'black' else 'black'
+            # 保存
+            yield (pickle.dumps(tensor),
+                pickle.dumps(pi),
+                z,
+                row['game_id'],
+                row['move_index'])
+    except Exception as e:
+        log(f"{game_id} 棋盘解析错误: {e}")
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('delete from moves where game_id=?',(game_id,))
+        conn.commit()   
+        return
 
 def main():
     with sqlite3.connect(DB_FILE) as conn:
@@ -97,6 +105,7 @@ def main():
         buf = []
         for game_id, moves in tqdm.tqdm(groups, desc='Games'):
             for tensor_b, pi_b, z, gid, mid in process_game(game_id, moves, conn):
+                if tensor_b is None: continue
                 buf.append((tensor_b, pi_b, z, gid, mid))
             cur.executemany(
                 "UPDATE moves SET tensor=?, pi=?, z=? WHERE game_id=? AND move_index=?", buf)

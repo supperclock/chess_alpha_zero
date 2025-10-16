@@ -27,31 +27,31 @@ def ai_move():
     if side_to_move == 'red':
         best_move = minimax_root(board_state, side_to_move)
     else:
-        best_move = find_best_move_c(board_state, side_to_move, 5)
+        best_move = find_best_move_c(board_state, side_to_move, 20)
     
     # best_move = nn_interface(board_state, side_to_move)
     log(f"Best move: {best_move}")
     return jsonify(best_move)    
     
 
-from nn_interface import NN_Interface
-from train import mcts_policy
-from nn_data_representation import board_to_tensor, MOVE_TO_INDEX
-import torch
+# from nn_interface import NN_Interface
+# from train import mcts_policy
+# from nn_data_representation import board_to_tensor, MOVE_TO_INDEX
+# import torch
 import random
 
-nn_player = NN_Interface(model_path="ckpt/latest.pth") 
-def nn_interface(board_state, side):      
-    pi, v = mcts_policy(nn_player, board_state, side, temperature=0)  
-    tensor, pi_vec = board_to_tensor(board_state, side).squeeze(0), torch.zeros(len(MOVE_TO_INDEX))
-    for move, prob in pi.items():
-        key = (move.fy, move.fx, move.ty, move.tx)
-        if key in MOVE_TO_INDEX: pi_vec[MOVE_TO_INDEX[key]] = prob   
-    moves, probs = list(pi.keys()), list(pi.values())
-    if not moves: # 确保列表非空
-        return None
-    move = random.choices(moves, weights=probs)[0]
-    return move.to_dict()
+# nn_player = NN_Interface(model_path="ckpt/latest.pth") 
+# def nn_interface(board_state, side):      
+#     pi, v = mcts_policy(nn_player, board_state, side, temperature=0)  
+#     tensor, pi_vec = board_to_tensor(board_state, side).squeeze(0), torch.zeros(len(MOVE_TO_INDEX))
+#     for move, prob in pi.items():
+#         key = (move.fy, move.fx, move.ty, move.tx)
+#         if key in MOVE_TO_INDEX: pi_vec[MOVE_TO_INDEX[key]] = prob   
+#     moves, probs = list(pi.keys()), list(pi.values())
+#     if not moves: # 确保列表非空
+#         return None
+#     move = random.choices(moves, weights=probs)[0]
+#     return move.to_dict()
 
     # _, policy = nn_player.predict(board_state, side)
     # 按概率从高到低排序并打印

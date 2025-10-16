@@ -96,7 +96,7 @@ def worker_process_game(args):
                 move_index
             ))
     except Exception as e:
-        log(f"!!! Worker Error: 游戏 {game_id} 棋盘解析错误: {e}")
+        log(f"!!! Worker Error:  {game_id} 解析错误: {e}")
         # 如果一个棋局处理失败，返回一个空列表，主进程将跳过它
         return []
     
@@ -125,7 +125,7 @@ def main():
         # 2. 按 game_id 分组
         from itertools import groupby
         groups = [(k, list(g)) for k, g in groupby(todo, key=lambda r: r['game_id'])]
-        get_move_maps()
+        # get_move_maps()
 
         # 3. 为每个棋局预先计算z值，并打包成工作任务
         print("正在为每个棋局准备任务...")
@@ -142,7 +142,7 @@ def main():
         print(f"启动 {num_workers} 个工作进程进行并行计算...")
         
         buf = []
-        with mp.Pool(processes=num_workers) as pool:
+        with mp.Pool(processes=num_workers, initializer=get_move_maps) as pool:
             # 使用 imap_unordered 来获得最佳性能，它会按完成顺返回结果
             # tqdm 用于显示总体进度
             progress_bar = tqdm.tqdm(

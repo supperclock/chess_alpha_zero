@@ -1,56 +1,53 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-AlphaZero-style 自对弈循环训练脚本（中国象棋）- 带模型评估
+AlphaZero-style 训练脚本（中国象棋） - 带早停功能
 """
 import os, time, random, json, torch, torch.nn as nn
 from torch.utils.data import IterableDataset, DataLoader
-import sqlite3, pickle, torch, shutil
+import sqlite3, pickle, torch
 from collections import defaultdict, deque
 from nn_interface import NN_Interface
 from nn_data_representation import board_to_tensor, MOVE_TO_INDEX
-from collections import Counter
 from ai import (
     make_move, unmake_move, generate_moves,
-    check_game_over, copy_board, INITIAL_SETUP
+    check_game_over, copy_board
 )
 from util import * 
 from tqdm import tqdm
 
 # ---------------- 超参数 ----------------
-MODEL_DIR        = "ckpt"
-DB_PATH          = 'chess_games.db'
-TOTAL_GAMES      = 50000
-GAMES_PER_CYCLE  = 100             # <<-- 建议增加
-EPOCHS_PER_CYCLE = 2
-MCTS_SIMULS      = 400
+MODEL_DIR        = "ckpt"          # 权重保存目录
+DB_PATH          = 'chess_games.db' # 数据库文件路径
+SELFPLAY_GAMES   = 1         # 总对局数（可 Ctrl-C 随时停）
+MCTS_SIMULS      = 400             # 每步 MCTS 模拟次数
 C_PUCT           = 2.0
-TAU              = 1.0
+TAU              = 1.0             # 温度，前 30 步用 1.0，之后 0.1
 BATCH_SIZE       = 256
-LR               = 5e-5            # <<-- 建议降低
-MAX_DB_ROWS      = 200000
-MAX_GAME_STEPS   = 200
+LR               = 5e-4
+MAX_EPOCHS       = 100             # <<-- 修改：最大训练轮数，早停可能会提前结束
+CHECKPOINT_EVERY = 10              # 每 N 盘存一次权重
+SAVE_EVERY_N_BATCHES = 1000   
 DEVICE           = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# --- 新增：评估阶段超参数 ---
-EVALUATE_GAMES   = 40              # 每次评估时，新旧模型对战的局数
-EVALUATE_WIN_RATE = 0.55           # 新模型胜率超过此阈值，才能被接受
-MCTS_SIMULS_EVAL = 100             # 评估时 MCTS 模拟次数可以少一些，以加快速度
+# --- 新增：早停相关超参数 ---
+VALIDATION_SPLIT = 0.1             # 验证集占总数据量的比例 (例如 0.1 表示 10%)
+PATIENCE         = 3               # 连续 N 个 epoch 验证损失没有改善就停止
 
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-# ---------------- MCTS 节点与搜索 (保持不变) ----------------
+# ---------------- MCTS 节点 ----------------
 class MCTSNode:
     # (此部分代码未修改，保持原样)
     def __init__(self, board, side, parent=None, prior=0.0):
         self.board   = copy_board(board)
         self.side    = side
         self.parent  = parent
-        self.P       = prior
-        self.N       = 0
-        self.W       = 0.0
-        self.Q       = 0.0
-        self.children = {}
+        self.P       = prior          # 网络给出的先验概率
+        self.N      = 0               # 访问次数
+        self.W      = 0.0             # 累计价值
+        self.Q      = 0.0             # 平均价值
+        self.children = {}            # move -> MCTSNode
     def is_leaf(self): return len(self.children) == 0
     def select(self):
         best_score = -float('inf')
@@ -71,6 +68,7 @@ class MCTSNode:
         self.Q = self.W / self.N
         if self.parent: self.parent.backup(-v)
 
+# ---------------- MCTS 搜索 ----------------
 def mcts_policy(net, board, side, simuls=MCTS_SIMULS, temperature=TAU):
     # (此部分代码未修改，保持原样)
     root = MCTSNode(board, side)
@@ -80,17 +78,18 @@ def mcts_policy(net, board, side, simuls=MCTS_SIMULS, temperature=TAU):
     root.expand(prior_dict)
     for _ in range(simuls):
         node = root
-        move = None
+        move, node = node, None # Fix: select might return None
         while not node.is_leaf():
             move, node = node.select()
         if node.parent:
             captured = make_move(node.board, move)
-        game_over = check_game_over(node.board)
-        if game_over['game_over']:
-            v = 1.0 if game_over['message'][0] == '黑' else -1.0
-            node.backup(v)
-            if node.parent: unmake_move(node.board, move, captured)
-            continue
+            game_over = check_game_over(node.board)
+            if game_over['game_over']:
+                v = 1.0 if game_over['message'][0] == '黑' else -1.0
+                node.backup(v)
+                unmake_move(node.board, move, captured)
+                continue
+        else: captured = None
         value, move_priors = net.predict(node.board, node.side)
         legal = generate_moves(node.board, node.side)
         filtered = {m: move_priors.get(m, 0.) for m in legal}
@@ -108,86 +107,71 @@ def mcts_policy(net, board, side, simuls=MCTS_SIMULS, temperature=TAU):
             pi[move] = child.N**(1/temperature) / (sum_N or 1.0)
     return pi, root.Q
 
-def board_to_key(board, side):
-    """将棋盘和走棋方转换为一个唯一的、可哈希的键"""
-    board_tuple = tuple(tuple(str(p) for p in row) for row in board)
-    return (board_tuple, side)
-    
-# ---------------- 自对弈 & 数据存储 (保持不变) ----------------
-def self_play_one_game(net):
+# -------------- 其他函数 (保持不变) --------------
+def print_board_color(board, current_player):
+    log("\n   a  b  c  d  e  f  g  h  i  (列)")
+    log(" --------------------------")
+    for y, row in enumerate(board):
+        row_str = f"{y}|"
+        for piece in row: row_str += " ・ " if piece is None else (f"\033[1m {piece['type']} \033[0m" if piece['side'] == 'black' else f"\033[91m {piece['type']} \033[0m")
+        log(row_str)
+    log(" --------------------------")
+    log(f"当前走棋方: {current_player}\n")
+def wait_key(): input(">>> 按回车继续下一步...")
+def self_play_one_game(net, pause=True):
+    from ai import INITIAL_SETUP, make_move, unmake_move, generate_moves, check_game_over
     board, side, examples, step = copy_board(INITIAL_SETUP), 'red', [], 0
-    position_history = Counter()
-    position_history[board_to_key(board, side)] += 1
-    z = 0.0 # Default to draw
-
     while True:
-        temp = 1.0 if step < 30 else 0.1
-        pi, v = mcts_policy(net, board, side, temperature=temp)
+        log(f"\n======== 第 {step+1} 步 （{side} 方）========")
+        print_board_color(board, side)
+        pi, v = mcts_policy(net, board, side, temperature=1.0 if step < 30 else 0.1)
         tensor, pi_vec = board_to_tensor(board, side).squeeze(0), torch.zeros(len(MOVE_TO_INDEX))
         for move, prob in pi.items():
             key = (move.fy, move.fx, move.ty, move.tx)
             if key in MOVE_TO_INDEX: pi_vec[MOVE_TO_INDEX[key]] = prob
-        examples.append({'tensor': tensor, 'pi': pi_vec, 'side': side})
-        
+        examples.append((tensor, pi_vec, side))
         moves, probs = list(pi.keys()), list(pi.values())
-        if not moves: 
-            z = -1.0 if side == 'black' else 1.0
-            break
         move = random.choices(moves, weights=probs)[0]
-        
-        make_move(board, move)
+        log(f"AI 选择：{move.fy}{move.fx} → {move.ty}{move.tx}")
+        captured = make_move(board, move)
         step += 1
-        side = 'red' if side == 'black' else 'black'
-
         game_over = check_game_over(board)
         if game_over['game_over']:
+            print_board_color(board, side)
+            log(f"对局结束：{game_over['message']}")
             z = 1.0 if game_over['message'][0] == '黑' else -1.0
-            break
+            return [(tensor, pi_vec, z if who=='black' else -z) for tensor, pi_vec, who in examples]
+        side = 'red' if side == 'black' else 'black'
+        if pause: wait_key()
 
-        current_key = board_to_key(board, side)
-        position_history[current_key] += 1
-        if position_history[current_key] >= 3:
-            z = 0.0
-            break
-
-        if step > MAX_GAME_STEPS:
-            z = 0.0
-            break
-                    
-    final_examples = []    
-    for ex in examples:
-        final_z = 0.0 if z == 0.0 else (z if ex['side'] == 'black' else -z)
-        final_examples.append((ex['tensor'], ex['pi'], final_z))
-    return final_examples    
-
-def save_examples_to_db(examples):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("CREATE TABLE IF NOT EXISTS self_play_moves (tensor BLOB, pi BLOB, z REAL)")
-    
-    for tensor, pi, z in examples:
-        cur.execute("INSERT INTO self_play_moves (tensor, pi, z) VALUES (?, ?, ?)",
-                    (pickle.dumps(tensor), pickle.dumps(pi), z))
-    conn.commit()
-    
-    cur.execute("SELECT COUNT(*) FROM self_play_moves")
-    count = cur.fetchone()[0]
-    if count > MAX_DB_ROWS:
-        num_to_delete = count - MAX_DB_ROWS
-        log(f"数据库达到上限 {MAX_DB_ROWS}，正在删除最旧的 {num_to_delete} 条记录...")
-        cur.execute(f"DELETE FROM self_play_moves WHERE rowid IN (SELECT rowid FROM self_play_moves ORDER BY rowid ASC LIMIT {num_to_delete})")
-        conn.commit()
-        log("删除完成。")
-
-    conn.close()
-    
+# ---------------- 数据集 (修改) ----------------
 class SQLiteChessDataset(IterableDataset):
-    def __init__(self, db_path):
+    def __init__(self, db_path, split='train', split_ratio=VALIDATION_SPLIT, shuffle=True):
         self.db_path = db_path
+        self.split = split
+        self.shuffle = shuffle
+
+        # 连接数据库，计算训练集和验证集的大小
+        with sqlite3.connect(self.db_path) as conn:
+            total_rows = conn.execute("SELECT COUNT(*) FROM moves WHERE tensor IS NOT NULL").fetchone()[0]
+        
+        self.val_size = int(total_rows * split_ratio)
+        self.train_size = total_rows - self.val_size
+
     def __iter__(self):
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        sql = "SELECT tensor, pi, z FROM self_play_moves WHERE tensor IS NOT NULL ORDER BY RANDOM()"
+        
+        # 根据是训练集还是验证集，构建不同的 SQL 查询
+        if self.split == 'train':
+            sql = f"SELECT tensor, pi, z FROM moves WHERE tensor IS NOT NULL"
+            if self.shuffle:
+                sql += " ORDER BY RANDOM()"
+            sql += f" LIMIT {self.train_size}"
+        else: # validation
+            # 从数据末尾取 N 条作为验证集
+            sql = f"SELECT tensor, pi, z FROM moves WHERE tensor IS NOT NULL ORDER BY rowid DESC LIMIT {self.val_size}"
+
         cur = conn.execute(sql)
         for row in cur:
             yield (pickle.loads(row['tensor']),
@@ -195,157 +179,105 @@ class SQLiteChessDataset(IterableDataset):
                    torch.tensor(row['z'], dtype=torch.float32))
         conn.close()
 
-# ---------------- 训练函数 (保持不变) ----------------
+# ---------------- 训练 (核心修改) ----------------
 def train(net, model_dir):
-    log("="*20 + " 训练阶段 " + "="*20)
-    dataset = SQLiteChessDataset(DB_PATH)
-    with sqlite3.connect(DB_PATH) as conn:
-        try:
-            total_rows = conn.execute("SELECT COUNT(*) FROM self_play_moves").fetchone()[0]
-            if total_rows < BATCH_SIZE * 10:
-                log(f"数据量过少 ({total_rows} 条)，跳过本次训练。")
-                return
-        except sqlite3.OperationalError:
-            log("数据库为空，跳过本次训练。")
-            return
-            
-    loader = DataLoader(dataset, batch_size=BATCH_SIZE, num_workers=4, prefetch_factor=2)
+    log("正在创建数据加载器...")
+    train_dataset = SQLiteChessDataset(DB_PATH, split='train')
+    val_dataset = SQLiteChessDataset(DB_PATH, split='val', shuffle=False) # 验证集不需要随机化
+
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, num_workers=4, prefetch_factor=2)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, num_workers=4, prefetch_factor=2)
+
     optimizer = torch.optim.Adam(net.model.parameters(), lr=LR, weight_decay=1e-4)
     loss_v = nn.MSELoss()
 
-    for epoch in range(1, EPOCHS_PER_CYCLE + 1):
+    # --- 早停逻辑变量 ---
+    best_val_loss = float('inf')
+    epochs_no_improve = 0
+
+    log("开始训练循环...")
+    for epoch in range(1, MAX_EPOCHS + 1):
+        # --- 1. 训练阶段 ---
         net.model.train()
         total_loss_pi, total_loss_v = 0.0, 0.0
         batches = 0
         
-        progress_bar = tqdm(loader, desc=f"Epoch {epoch}/{EPOCHS_PER_CYCLE}", leave=True, ncols=120, unit="batch")
-        for board_tensor, pi_vec, z in progress_bar:
+        train_progress_bar = tqdm(train_loader, desc=f"Epoch {epoch}/{MAX_EPOCHS} [训练]", leave=True, ncols=120, unit="batch")
+        for board_tensor, pi_vec, z in train_progress_bar:
             board_tensor, pi_vec, z = board_tensor.to(DEVICE), pi_vec.to(DEVICE), z.to(DEVICE)
             pred_pi, pred_v = net.model(board_tensor)
+            
             L_pi = -torch.sum(pi_vec * torch.log_softmax(pred_pi, dim=1), dim=1).mean()
             L_v = loss_v(pred_v.squeeze(), z)
             loss = L_pi + L_v
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
             total_loss_pi += L_pi.item()
             total_loss_v += L_v.item()
             batches += 1
-            if batches == 0: continue
+
+            if batches > 0 and batches % SAVE_EVERY_N_BATCHES == 0:
+                ckpt_path = os.path.join(model_dir, f"ckpt_epoch_{epoch}_batch_{batches}.pth")
+                torch.save(net.model.state_dict(), ckpt_path)
+                torch.save(net.model.state_dict(), os.path.join(model_dir, "latest.pth"))
+                train_progress_bar.write(f"  -> Checkpoint saved to {ckpt_path}")
+
             avg_loss_pi = total_loss_pi / batches
             avg_loss_v = total_loss_v / batches
-            progress_bar.set_postfix(loss_pi=f"{avg_loss_pi:.4f}", loss_v=f"{avg_loss_v:.4f}")
-            
-    log(f"训练完成。保存挑战者模型到 {os.path.join(model_dir, 'latest.pth')}")
-    torch.save(net.model.state_dict(), os.path.join(model_dir, "latest.pth"))
+            train_progress_bar.set_postfix(loss_pi=f"{avg_loss_pi:.4f}", loss_v=f"{avg_loss_v:.4f}")
 
-
-# ---------------- 新增：模型评估函数 ----------------
-def evaluate_models(candidate_net, best_net, num_games):
-    log("="*20 + " 评估阶段 " + "="*20)
-    candidate_wins = 0
-    
-    for i in tqdm(range(num_games), desc="模型评估对战"):
-        # 为了公平，轮流执红
-        if i % 2 == 0:
-            red_player, black_player = candidate_net, best_net
-        else:
-            red_player, black_player = best_net, candidate_net
-            
-        board = copy_board(INITIAL_SETUP)
-        side = 'red'
-        step = 0
-        position_history = Counter()
-        position_history[board_to_key(board, side)] += 1
+        # --- 2. 验证阶段 ---
+        net.model.eval()
+        total_val_loss_pi, total_val_loss_v = 0.0, 0.0
+        val_batches = 0
         
-        while True:
-            current_player = red_player if side == 'red' else black_player
-            # 评估时 temperature=0，总是选择最优走法
-            pi, _ = mcts_policy(current_player, board, side, simuls=MCTS_SIMULS_EVAL, temperature=0.0)
-            
-            moves = list(pi.keys())
-            if not moves:
-                # 当前方无棋可走，判负
-                winner = 'black' if side == 'red' else 'red'
-                break
-            
-            # 选择访问次数最多的走法
-            best_move = max(pi.items(), key=lambda item: item[1])[0]
-            make_move(board, best_move)
-            side = 'red' if side == 'black' else 'black'
-            step += 1
-            
-            game_over = check_game_over(board)
-            if game_over['game_over']:
-                winner = 'black' if game_over['message'][0] == '黑' else 'red'
-                break
+        with torch.no_grad(): # 关闭梯度计算
+            val_progress_bar = tqdm(val_loader, desc=f"Epoch {epoch}/{MAX_EPOCHS} [验证]", leave=True, ncols=120, unit="batch")
+            for board_tensor, pi_vec, z in val_progress_bar:
+                board_tensor, pi_vec, z = board_tensor.to(DEVICE), pi_vec.to(DEVICE), z.to(DEVICE)
+                pred_pi, pred_v = net.model(board_tensor)
 
-            current_key = board_to_key(board, side)
-            position_history[current_key] += 1
-            if position_history[current_key] >= 3 or step > MAX_GAME_STEPS:
-                winner = 'draw'
-                break
-        
-        # 计分
-        if winner == 'draw':
-            candidate_wins += 0.5
-        elif (winner == 'red' and red_player == candidate_net) or \
-             (winner == 'black' and black_player == candidate_net):
-            candidate_wins += 1
+                L_pi = -torch.sum(pi_vec * torch.log_softmax(pred_pi, dim=1), dim=1).mean()
+                L_v = loss_v(pred_v.squeeze(), z)
+                
+                total_val_loss_pi += L_pi.item()
+                total_val_loss_v += L_v.item()
+                val_batches += 1
+
+                avg_val_loss_pi = total_val_loss_pi / val_batches
+                avg_val_loss_v = total_val_loss_v / val_batches
+                val_progress_bar.set_postfix(val_loss_pi=f"{avg_val_loss_pi:.4f}", val_loss_v=f"{avg_val_loss_v:.4f}")
+
+        # --- 3. 早停逻辑判断 ---
+        if val_batches > 0:
+            avg_val_loss = (total_val_loss_pi + total_val_loss_v) / val_batches
+            log(f"Epoch {epoch} Summary: Avg Train Loss(pi/v): {total_loss_pi/batches:.4f}/{total_loss_v/batches:.4f} | Avg Val Loss(pi/v): {total_val_loss_pi/val_batches:.4f}/{total_val_loss_v/val_batches:.4f}")
             
-    return candidate_wins / num_games
+            if avg_val_loss < best_val_loss:
+                log(f"  Validation loss improved ({best_val_loss:.4f} --> {avg_val_loss:.4f}). Saving best model...")
+                best_val_loss = avg_val_loss
+                epochs_no_improve = 0
+                torch.save(net.model.state_dict(), os.path.join(model_dir, "best_model.pth"))
+            else:
+                epochs_no_improve += 1
+                log(f"  Validation loss did not improve for {epochs_no_improve} epoch(s). Best was {best_val_loss:.4f}.")
 
+            if epochs_no_improve >= PATIENCE:
+                log(f"Early stopping triggered after {PATIENCE} epochs with no improvement.")
+                break # 退出训练循环
 
-# ---------------- 主循环 (核心修改) ----------------
+# ---------------- 主循环 ----------------
 def main():
-    latest_path = os.path.join(MODEL_DIR, "latest.pth")
-    best_path = os.path.join(MODEL_DIR, "best.pth")
-
-    # --- 初始化模型 ---
-    # 如果 best.pth 不存在，说明是第一次运行，将 latest.pth 复制为 best.pth
-    if not os.path.exists(best_path) and os.path.exists(latest_path):
-        log(f"未找到冠军模型 (best.pth)，将初始模型 {latest_path} 设为冠军。")
-        shutil.copyfile(latest_path, best_path)
-
-    # 加载两个模型
-    # best_net 用于生成数据，candidate_net 用于训练和挑战
-    best_net = NN_Interface(model_path=best_path)
-    candidate_net = NN_Interface(model_path=latest_path)
+    net = NN_Interface(model_path=os.path.join(MODEL_DIR, "latest.pth"))
     
-    game_num = 0
-    # 尝试从数据库获取已有的游戏数量
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            game_num = conn.execute("SELECT COUNT(DISTINCT game_id) FROM moves").fetchone()[0] # 假设你有 game_id
-    except: # 如果表或列不存在，从0开始
-        game_num = 0
-        
-    while game_num < TOTAL_GAMES:
-        # 1. 自对弈阶段：使用 best_net 生成数据
-        log("="*20 + f" 自对弈阶段 (使用模型: {best_path}) " + "="*20)
-        for i in tqdm(range(GAMES_PER_CYCLE), desc=f"自对弈循环 ({game_num+1}-{game_num+GAMES_PER_CYCLE})"):
-            examples_one_game = self_play_one_game(best_net)
-            if examples_one_game:
-                save_examples_to_db(examples_one_game)
-            game_num += 1
+    # 直接开始训练，并使用新的早停逻辑
+    train(net, MODEL_DIR)
 
-        # 2. 训练阶段：训练 candidate_net
-        train(candidate_net, MODEL_DIR)
-
-        # 3. 评估阶段：candidate_net 挑战 best_net
-        win_rate = evaluate_models(candidate_net, best_net, EVALUATE_GAMES)
-        log(f"评估完成。挑战者模型胜率: {win_rate:.2%}")
-
-        if win_rate > EVALUATE_WIN_RATE:
-            log(f"挑战成功！新模型成为冠军。胜率 {win_rate:.2%} > {EVALUATE_WIN_RATE:.2%}")
-            # 更新 best.pth
-            shutil.copyfile(latest_path, best_path)
-            # best_net 实例也需要重新加载模型
-            best_net = NN_Interface(model_path=best_path)
-        else:
-            log(f"挑战失败。继续使用旧的冠军模型。胜率 {win_rate:.2%} <= {EVALUATE_WIN_RATE:.2%}")
-
-    log(f"已完成全部 {TOTAL_GAMES} 局对弈训练。")
+    log("训练结束。")
+    # 注意：自对弈循环部分仍被注释，当前脚本专注于在现有数据上训练。
 
 if __name__ == "__main__":
     main()

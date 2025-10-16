@@ -8,6 +8,7 @@ from torch.utils.data import IterableDataset, DataLoader
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import sqlite3, pickle, torch
 from collections import defaultdict, deque, OrderedDict
+import math # <<< 新增：导入 math 库用于计算批次数
 from nn_interface import NN_Interface
 from nn_data_representation import board_to_tensor, MOVE_TO_INDEX
 from ai import (
@@ -193,6 +194,13 @@ def train(net, model_dir):
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, num_workers=num_workers, prefetch_factor=2)
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, num_workers=num_workers, prefetch_factor=2)
 
+    # <<< 修改：手动计算总批次数 >>>
+    # 使用 math.ceil 确保最后一个不完整的批次也被计算在内
+    total_train_batches = math.ceil(train_dataset.train_size / BATCH_SIZE)
+    total_val_batches = math.ceil(val_dataset.val_size / BATCH_SIZE)
+    log(f"数据集信息: {train_dataset.train_size} 训练样本 ({total_train_batches} 批次), {val_dataset.val_size} 验证样本 ({total_val_batches} 批次)")
+
+
     optimizer = torch.optim.Adam(net.model.parameters(), lr=LR, weight_decay=1e-4)
     loss_v = nn.MSELoss()
 
@@ -210,7 +218,11 @@ def train(net, model_dir):
         total_loss_pi, total_loss_v = 0.0, 0.0
         batches = 0
         
-        train_progress_bar = tqdm(train_loader, desc=f"Epoch {epoch}/{MAX_EPOCHS} [训练]", leave=True, ncols=120, unit="batch")
+        # <<< 修改：为 tqdm 提供 total 参数 >>>
+        train_progress_bar = tqdm(train_loader, 
+                                  total=total_train_batches, 
+                                  desc=f"Epoch {epoch}/{MAX_EPOCHS} [训练]", 
+                                  leave=True, ncols=120, unit="batch")
         for board_tensor, pi_vec, z in train_progress_bar:
             board_tensor, pi_vec, z = board_tensor.to(DEVICE), pi_vec.to(DEVICE), z.to(DEVICE)
             pred_pi, pred_v = net.model(board_tensor)
@@ -251,7 +263,11 @@ def train(net, model_dir):
         val_batches = 0
         
         with torch.no_grad():
-            val_progress_bar = tqdm(val_loader, desc=f"Epoch {epoch}/{MAX_EPOCHS} [验证]", leave=True, ncols=120, unit="batch")
+            # <<< 修改：为验证集的 tqdm 也提供 total 参数 >>>
+            val_progress_bar = tqdm(val_loader, 
+                                    total=total_val_batches,
+                                    desc=f"Epoch {epoch}/{MAX_EPOCHS} [验证]", 
+                                    leave=True, ncols=120, unit="batch")
             for board_tensor, pi_vec, z in val_progress_bar:
                 board_tensor, pi_vec, z = board_tensor.to(DEVICE), pi_vec.to(DEVICE), z.to(DEVICE)
                 pred_pi, pred_v = net.model(board_tensor)

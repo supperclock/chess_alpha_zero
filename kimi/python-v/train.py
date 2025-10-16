@@ -241,6 +241,7 @@ def train(net, model_dir):
             total_loss_pi += L_pi.item()
             total_loss_v += L_v.item()
             batches += 1
+            log(f"  batch {batches}/{total_train_batches}  loss_pi={L_pi.item():.4f}  loss_v={L_v.item():.4f}")
 
             # --- 修改：保存模型时，处理 DataParallel 的情况 ---
             if batches > 0 and batches % SAVE_EVERY_N_BATCHES == 0:

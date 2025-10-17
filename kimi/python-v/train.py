@@ -159,28 +159,35 @@ class SQLiteChessDataset(IterableDataset):
         self.shuffle = shuffle
 
         with sqlite3.connect(self.db_path) as conn:
-            total_rows = conn.execute("SELECT COUNT(*) FROM moves WHERE tensor IS NOT NULL").fetchone()[0]
+            # 使用 rowid，这是 SQLite 中最快的行标识符
+            all_ids = [row[0] for row in conn.execute("SELECT rowid FROM moves WHERE tensor IS NOT NULL")]
+        # 2. 如果需要，对 ID 列表进行洗牌
+        if self.shuffle:
+            random.shuffle(all_ids)
+        # 3. 根据比例分割训练集和验证集的 ID
+        val_size = int(len(all_ids) * split_ratio)
+        train_size = len(all_ids) - val_size
         
-        self.val_size = int(total_rows * split_ratio)
-        self.train_size = total_rows - self.val_size
+        if self.split == 'train':
+            self.ids = all_ids[:train_size]
+            self.size = train_size
+        else: # validation
+            self.ids = all_ids[train_size:]
+            self.size = val_size
 
     def __iter__(self):
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         
-        if self.split == 'train':
-            sql = f"SELECT tensor, pi, z FROM moves WHERE tensor IS NOT NULL"
-            if self.shuffle:
-                sql += " ORDER BY RANDOM()"
-            sql += f" LIMIT {self.train_size}"
-        else: # validation
-            sql = f"SELECT tensor, pi, z FROM moves WHERE tensor IS NOT NULL ORDER BY rowid DESC LIMIT {self.val_size}"
-
-        cur = conn.execute(sql)
-        for row in cur:
-            yield (pickle.loads(row['tensor']),
-                   pickle.loads(row['pi']),
-                   torch.tensor(row['z'], dtype=torch.float32))
+        # <<< 修改：不再执行慢查询，而是遍历洗牌后的 ID 列表 >>>
+        # 4. 遍历洗牌后的 ID 列表，并逐个查询数据
+        for row_id in self.ids:
+            cur = conn.execute("SELECT tensor, pi, z FROM moves WHERE rowid = ?", (row_id,))
+            row = cur.fetchone()
+            if row:
+                yield (pickle.loads(row['tensor']),
+                       pickle.loads(row['pi']),
+                       torch.tensor(row['z'], dtype=torch.float32))
         conn.close()
 
 # ---------------- 训练 (核心修改) ----------------
@@ -194,12 +201,10 @@ def train(net, model_dir):
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, num_workers=num_workers, prefetch_factor=2)
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, num_workers=num_workers, prefetch_factor=2)
 
-    # <<< 修改：手动计算总批次数 >>>
-    # 使用 math.ceil 确保最后一个不完整的批次也被计算在内
-    total_train_batches = math.ceil(train_dataset.train_size / BATCH_SIZE)
-    total_val_batches = math.ceil(val_dataset.val_size / BATCH_SIZE)
-    log(f"数据集信息: {train_dataset.train_size} 训练样本 ({total_train_batches} 批次), {val_dataset.val_size} 验证样本 ({total_val_batches} 批次)")
-
+    # <<< 修改：从新的 Dataset 对象中获取正确的批次数 >>>
+    total_train_batches = math.ceil(train_dataset.size / BATCH_SIZE)
+    total_val_batches = math.ceil(val_dataset.size / BATCH_SIZE)
+    log(f"数据集信息: {train_dataset.size} 训练样本 ({total_train_batches} 批次), {val_dataset.size} 验证样本 ({total_val_batches} 批次)")
 
     optimizer = torch.optim.Adam(net.model.parameters(), lr=LR, weight_decay=1e-4)
     loss_v = nn.MSELoss()

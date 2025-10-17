@@ -4,7 +4,8 @@ import os
 from ai import check_game_over
 from py_xq_wrapper import minimax_root
 from util import log
-from ai_bridge import find_best_move_c
+# from ai_bridge import find_best_move_c
+from ai_gpt_bridge import find_best_move_c
 
 app = Flask(__name__)
 CORS(app)

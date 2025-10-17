@@ -52,7 +52,7 @@ class XiangqiNet(nn.Module):
         super(XiangqiNet, self).__init__()
         
         # 1. Initial convolution layer (body)
-        self.conv_in = nn.Conv2d(NUM_CHANNELS, num_filters, kernel_size=3, stride=1, padding=1, bias=False)
+        self.conv_in = nn.Conv2d(NUM_CHANNELS+1, num_filters, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn_in = nn.BatchNorm2d(num_filters)
         
         # 2. Residual blocks

@@ -116,7 +116,7 @@ def main():
         # 1. 所有待处理记录
         print("正在查询所有待处理的走法记录...")
         todo = list(cur.execute(
-            "SELECT game_id, move_index, iccs FROM moves WHERE tensor IS NULL ORDER BY game_id, move_index"))
+            "SELECT game_id, move_index, iccs FROM moves WHERE tag=0 ORDER BY game_id, move_index"))
         if not todo:
             print('没有需要更新的记录。')
             return
@@ -159,7 +159,7 @@ def main():
                 # 当缓冲区达到批处理大小时，写入数据库
                 if len(buf) >= BATCH:
                     cur.executemany(
-                        "UPDATE moves SET tensor=?, pi=?, z=? WHERE game_id=? AND move_index=?", buf)
+                        "UPDATE moves SET tensor=?, pi=?, z=?, tag=1 WHERE game_id=? AND move_index=?", buf)
                     conn.commit()
                     print(f" -> 已提交 {len(buf)} 条更新。")
                     buf.clear()
@@ -167,7 +167,7 @@ def main():
         # 5. 处理并提交缓冲区中剩余的最后一批数据
         if buf:
             cur.executemany(
-                "UPDATE moves SET tensor=?, pi=?, z=? WHERE game_id=? AND move_index=?", buf)
+                "UPDATE moves SET tensor=?, pi=?, z=?, tag=1 WHERE game_id=? AND move_index=?", buf)
             conn.commit()
             print(f" -> 已提交最后 {len(buf)} 条更新。")
             buf.clear()

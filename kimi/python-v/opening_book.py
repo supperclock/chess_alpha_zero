@@ -64,7 +64,7 @@ def find_from_position(current_board, side_to_move):
     board_state = compute_zobrist(current_board, side_to_move)
     cursor.execute('''
         SELECT best_move FROM positions
-        WHERE zobrist = ? order by visits desc
+        WHERE zobrist = ? order by black_wins desc
     ''', (str(board_state),))
     # cursor.execute('''
     #     SELECT best_move FROM ttxq_positions

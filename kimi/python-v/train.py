@@ -194,95 +194,80 @@ def get_opponent_move(board, side) -> Move:
     # --- 示例结束 ---
 
 
-# ---------------- [新增] 与接口对弈 ----------------
 def play_against_opponent(net, model_plays_as='red'):
     """
-    运行一盘对局：我们的 MCTS 模型 vs 您的 get_opponent_move 接口
-    
-    参数:
-    - net: 我们的神经网络接口 (NN_Interface)
-    - model_plays_as: 我们的模型执哪一方 ('red' 或 'black')
-    
-    返回:
-    - game_examples: 一个列表，包含 (tensor, pi_vec, z) 元组，用于训练
+    运行一盘对局：我们的 MCTS 模型 vs 对手接口
+    当任意一方无合法走法时自动判负。
     """
     board = copy_board(INITIAL_SETUP)
     side = 'red'
     step = 0
-    
-    # 只存储我们模型走棋时的数据
-    # (state_tensor, policy_vector, side_who_played)
-    model_examples = [] 
-    
+    model_examples = []
+
+    def end_game(winner, loser, reason):
+        """统一结束对局逻辑"""
+        log(f"【对局结束】{reason}")
+        game_z = 1.0 if winner == 'black' else -1.0
+        final_examples = [
+            (tensor, pi_vec, game_z if who_played == 'black' else -game_z)
+            for tensor, pi_vec, who_played in model_examples
+        ]
+        if model_plays_as == winner:
+            log("  模型 胜利！")
+        else:
+            log("  模型 失败！")
+        log(f"本局为模型 ({model_plays_as}) 收集到 {len(final_examples)} 条训练数据。")
+        return final_examples
+
     while True:
         print_board_color(board, side)
-        
-        move = None
+
+        # === 1. 检查是否有合法走法 ===
+        legal_moves = generate_moves(board, side)
+        if not legal_moves:
+            winner = 'red' if side == 'black' else 'black'
+            return end_game(winner, side, f"{side} 方无合法走法，判负。")
+
+        # === 2. 执行走棋逻辑 ===
         if side == model_plays_as:
-            # --- 轮到我们的 MCTS 模型 ---
             log(f"  (我方 MCTS) 正在为 {side} 方思考...")
-            
-            # 使用较小的温度（或 0）来进行评估
-            # temp = 1.0 if step < 30 else 0.1 # 探索
-            temp = 0.1 # 强化
-            
-            pi, v = mcts_policy(net, board, side, temperature=temp)
-            
-            if not pi: # 没有合法走法
-                break # 游戏结束
-                
-            # 准备训练数据
+            pi, v = mcts_policy(net, board, side, temperature=0.1)
+            if not pi:  # 理论上不会发生，但保险
+                winner = 'red' if side == 'black' else 'black'
+                return end_game(winner, side, f"{side} 方 MCTS 无棋可走。")
+
+            # 存储训练样本
             tensor = board_to_tensor(board, side).squeeze(0)
             pi_vec = torch.zeros(len(MOVE_TO_INDEX))
             for m, prob in pi.items():
                 key = (m.fy, m.fx, m.ty, m.tx)
-                if key in MOVE_TO_INDEX: pi_vec[MOVE_TO_INDEX[key]] = prob
-            
-            # 存储 (s, pi, side)，z (胜负结果) 在最后添加
+                if key in MOVE_TO_INDEX:
+                    pi_vec[MOVE_TO_INDEX[key]] = prob
             model_examples.append((tensor, pi_vec, side))
-            
-            # 从策略 pi 中采样走法
+
+            # 按概率选择走法
             moves, probs = list(pi.keys()), list(pi.values())
             move = random.choices(moves, weights=probs)[0]
             log(f"  (我方 MCTS) 选择：{move.fy}{move.fx} → {move.ty}{move.tx}")
-            
+
         else:
-            # --- 轮到您的接口 ---
             move = get_opponent_move(board, side)
             if move is None:
-                break # 游戏结束
-        
-        # 执行走法
-        captured = make_move(board, move)
-        step += 1
-        side = 'red' if side == 'black' else 'black' # 切换走棋方
+                winner = 'red' if side == 'black' else 'black'
+                return end_game(winner, side, f"{side} 方接口无走法。")
 
-        # 检查游戏是否结束
+        # === 3. 执行走法并检测终局 ===
+        make_move(board, move)
+        step += 1
+        side = 'red' if side == 'black' else 'black'
+
         game_over = check_game_over(board)
         if game_over['game_over']:
             print_board_color(board, side)
-            log(f"对局结束：{game_over['message']}")
-            
-            # 确定胜负结果 z
-            # AlphaZero 的 z 是从 "黑方" 的角度定义的
-            # 黑方胜 = +1.0, 红方胜 = -1.0, 和棋 = 0.0 (这里没有和棋)
-            game_z = 1.0 if game_over['message'][0] == '黑' else -1.0
-            if game_z == 1.0 and model_plays_as == 'black' or \
-               game_z == -1.0 and model_plays_as == 'red':
-                log("  模型 胜利！")
-            else:
-                log("  模型 失败！")
-            
-            final_examples = []
-            for tensor, pi_vec, who_played in model_examples:
-                # 我们需要从 *走棋方* 的角度来定义 z
-                # 如果是黑方走的 (who_played == 'black')，z = game_z
-                # 如果是红方走的 (who_played == 'red')， z = -game_z
-                z = game_z if who_played == 'black' else -game_z
-                final_examples.append((tensor, pi_vec, z))
-                
-            log(f"本局为模型 ({model_plays_as}) 收集到 {len(final_examples)} 条训练数据。")
-            return final_examples
+            winner = 'black' if game_over['message'][0] == '黑' else 'red'
+            loser = 'red' if winner == 'black' else 'black'
+            return end_game(winner, loser, game_over['message'])
+
 
 # ---------------- [新增] 存储数据 ----------------
 def save_game_to_db(game_data, db_path):

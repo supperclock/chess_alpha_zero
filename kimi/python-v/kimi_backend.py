@@ -41,7 +41,7 @@ from nn_data_representation import board_to_tensor, MOVE_TO_INDEX
 import torch
 import random
 
-nn_player = NN_Interface(model_path="ckpt/best_model.pth") 
+nn_player = NN_Interface(model_path="ckpt/latest.pth") 
 def nn_interface(board_state, side):      
     pi, v = mcts_policy(nn_player, board_state, side, temperature=0)  
     tensor, pi_vec = board_to_tensor(board_state, side).squeeze(0), torch.zeros(len(MOVE_TO_INDEX))

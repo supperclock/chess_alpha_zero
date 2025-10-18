@@ -3,18 +3,61 @@ from collections import namedtuple
 import logging
 import random
 import sqlite3
-
+import re
 logging.basicConfig(level=logging.DEBUG, format='[%(asctime)s] %(levelname)s: %(message)s')
 
 
 class Move:
     __slots__ = ('fy', 'fx', 'ty', 'tx', 'score', 'captured')
+    
     def __init__(self, fy, fx, ty, tx):
         self.fy, self.fx, self.ty, self.tx = fy, fx, ty, tx
         self.score = 0
         self.captured = None
+
     def to_dict(self):
         return {'from': {'y': self.fy, 'x': self.fx}, 'to': {'y': self.ty, 'x': self.tx}}
+    
+    @classmethod
+    def from_str(cls, move_str: str):
+        """
+        [已修改] 类方法：从字符串构建 Move 对象。
+        
+        接受的字符串格式示例:
+        - "Move(from_x=1, from_y=2, to_x=1, to_y=4)"
+        - "Move(fx=1, fy=2, tx=1, ty=4)"
+        """
+        
+        # 使用正则表达式查找所有 key=value 对
+        # \s* 允许等号周围有空格
+        pattern = re.compile(r"(\w+)\s*=\s*(\d+)")
+        matches = pattern.findall(move_str)
+        
+        params = {key: int(value) for key, value in matches}
+        
+        try:
+            # 检查是 'from_x' 格式还是 'fx' 格式
+            if 'from_x' in params:
+                fy = params['from_y']
+                fx = params['from_x']
+                ty = params['to_y']
+                tx = params['to_x']
+            elif 'fx' in params:
+                fy = params['fy']
+                fx = params['fx']
+                ty = params['ty']
+                tx = params['tx']
+            else:
+                raise KeyError("字符串中未找到 'fx'/'fy' 或 'from_x'/'from_y' 键。")
+                
+        except KeyError as e:
+            # 捕获 params['...'] 失败
+            raise ValueError(f"解析 Move 字符串 '{move_str}' 失败。缺少键: {e}")
+        
+        # 使用默认构造函数创建并返回实例
+        # cls 指向的就是 Move 类本身
+        return cls(fy=fy, fx=fx, ty=ty, tx=tx)
+
     def __eq__(self, other):
         if not isinstance(other, Move):
             if isinstance(other, dict) and 'from' in other and 'to' in other:
@@ -22,8 +65,15 @@ class Move:
                        self.ty == other['to']['y'] and self.tx == other['to']['x']
             return NotImplemented
         return self.fy == other.fy and self.fx == other.fx and self.ty == other.ty and self.tx == other.tx
+
     def __hash__(self):
         return hash((self.fy, self.fx, self.ty, self.tx))
+
+    def __repr__(self):
+        """
+        [建议添加] 返回一个清晰的字符串表示，方便调试。
+        """
+        return f"Move(fy={self.fy}, fx={self.fx}, ty={self.ty}, tx={self.tx})"
 
 ROWS = 10
 COLS = 9

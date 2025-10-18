@@ -117,7 +117,34 @@ def c_move_to_python_dict(c_move):
 # --- 5. 创建新的顶层AI入口函数 ---
 from opening_book import find_from_position, Move
 from util import *
-def find_best_move_c(board_state_py, side_py, max_depth=16, time_limit=10):
+
+def find_best_move_c_for_train(board_state_py, side_py):
+    move = find_from_position(board_state_py, side_py)
+    if move:
+        log("[搜索] 棋谱库命中，直接返回棋谱走法"+move)
+        #将move转换成Move对象
+        move = Move.from_str(move)
+        return move
+    # 步骤1: 将 Python 数据转换为 C 结构体
+    c_board_state = python_to_c_board(board_state_py, side_py)
+    
+    # 步骤2: 调用 C 引擎的核心函数
+    c_move = c_engine.find_best_move(
+        ctypes.byref(c_board_state), 
+        ctypes.c_int(10), 
+        ctypes.c_double(5)
+    )
+    # 检查是否为无效移动 (起点和终点相同)
+    if c_move.from_x == c_move.to_x and c_move.from_y == c_move.to_y:
+        return None
+    return Move(
+        fy=c_move.from_y,
+        fx=c_move.from_x,
+        ty=c_move.to_y,
+        tx=c_move.to_x
+    )
+
+def find_best_move_c(board_state_py, side_py, max_depth=16, time_limit=5):
     """
     这是新的AI入口函数，它将替换掉 Python ai.py 中的 minimax_root。
     

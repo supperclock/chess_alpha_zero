@@ -20,7 +20,7 @@ from tqdm import tqdm
 # ---------------- 超参数 ----------------
 MODEL_DIR        = "ckpt"          # 权重保存目录
 DB_PATH          = 'chess_games.db' # 数据库文件路径
-MCTS_SIMULS      = 400             # 每步 MCTS 模拟次数
+MCTS_SIMULS      = 800             # 每步 MCTS 模拟次数
 C_PUCT           = 2.0
 TAU              = 1.0             # 温度，前 30 步用 1.0，之后 0.1
 BATCH_SIZE       = 256
@@ -249,8 +249,11 @@ def play_against_opponent(net, model_plays_as='red'):
 
         # === 2. 执行走棋逻辑 ===
         if side == model_plays_as:
-            log(f"  (我方 MCTS) 正在为 {side} 方思考...")
-            pi, v = mcts_policy(net, board, side, temperature=0.1)
+            # 动态设置温度
+            current_temp = TAU if step < 30 else 0.1 # <--- 修改点：前30步用TAU (1.0)
+
+            log(f"  (我方 MCTS) 正在为 {side} 方思考... (Temp={current_temp})")
+            pi, v = mcts_policy(net, board, side, temperature=current_temp) # <--- 修改点
             if not pi:  # 理论上不会发生，但保险
                 winner = 'red' if side == 'black' else 'black'
                 return end_game(winner, side, f"{side} 方 MCTS 无棋可走。")

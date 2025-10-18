@@ -46,7 +46,7 @@ def setup_database():
     log(f"正在初始化数据库... {DB_PATH}")
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("""
-        CREATE TABLE IF NOT EXISTS moves (
+        CREATE TABLE IF NOT EXISTS self_play_moves (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             tensor BLOB,
             pi BLOB,
@@ -54,8 +54,19 @@ def setup_database():
         )
         """)
         conn.commit()
-        count = conn.execute("SELECT COUNT(*) FROM moves").fetchone()[0]
+        count = conn.execute("SELECT COUNT(*) FROM self_play_moves").fetchone()[0]
         log(f"数据库初始化完毕。当前总数据量: {count} 条")
+        #创建数据库表，保存模型与接口对弈的结果，字段包括自增ID，走棋步数，胜利方，更新时间
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS self_play_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            steps INTEGER,
+            winner TEXT,
+            update_time TEXT
+        )
+        """)
+        conn.commit()
+    
 
 # ---------------- MCTS 节点 ----------------
 class MCTSNode:
@@ -212,11 +223,19 @@ def play_against_opponent(net, model_plays_as='red'):
             (tensor, pi_vec, game_z if who_played == 'black' else -game_z)
             for tensor, pi_vec, who_played in model_examples
         ]
+        str_model_win = 'model_win'
         if model_plays_as == winner:
             log("  模型 胜利！")
         else:
             log("  模型 失败！")
+            str_model_win = 'model_lose'
         log(f"本局为模型 ({model_plays_as}) 收集到 {len(final_examples)} 条训练数据。")
+        #记录结果到数据库
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("""
+                         INSERT INTO self_play_results (steps,winner,updat_time) VALUES (?, ?, datetime('now', 'localtime'))
+                         """, 
+                         (len(final_examples), str_model_win))
         return final_examples
 
     while True:
@@ -289,12 +308,12 @@ def save_game_to_db(game_data, db_path):
     try:
         with sqlite3.connect(db_path) as conn:
             conn.executemany(
-                "INSERT INTO moves (tensor, pi, z) VALUES (?, ?, ?)",
+                "INSERT INTO self_play_moves (tensor, pi, z) VALUES (?, ?, ?)",
                 serialized_data
             )
             conn.commit()
             
-        count = conn.execute("SELECT COUNT(*) FROM moves").fetchone()[0]
+        count = conn.execute("SELECT COUNT(*) FROM self_play_moves").fetchone()[0]
         log(f"数据保存完毕。数据库中数据总量: {count} 条。")
         
     except Exception as e:
@@ -311,7 +330,7 @@ class SQLiteChessDataset(IterableDataset):
         # 连接数据库，计算训练集和验证集的大小
         try:
             with sqlite3.connect(self.db_path) as conn:
-                total_rows = conn.execute("SELECT COUNT(*) FROM moves WHERE tensor IS NOT NULL").fetchone()[0]
+                total_rows = conn.execute("SELECT COUNT(*) FROM self_play_moves WHERE tensor IS NOT NULL").fetchone()[0]
         except sqlite3.Error as e:
             log(f"数据库错误: {e}. 假设总行数为 0.")
             total_rows = 0
@@ -345,13 +364,13 @@ class SQLiteChessDataset(IterableDataset):
         
         if self.split == 'train':
             # 训练集：取最新的 N 条数据（N = train_size）
-            sql = f"SELECT tensor, pi, z FROM (SELECT * FROM moves WHERE tensor IS NOT NULL ORDER BY id DESC LIMIT {self.train_size}) AS T"
+            sql = f"SELECT tensor, pi, z FROM (SELECT * FROM self_play_moves WHERE tensor IS NOT NULL ORDER BY id DESC LIMIT {self.train_size}) AS T"
             if self.shuffle:
                 sql += " ORDER BY RANDOM()"
         else: # validation
             # 验证集：从最新的 N 条（训练集）数据 *之前* 取 M 条（M = val_size）
             # 这样确保了训练集和验证集不重叠
-            sql = f"SELECT tensor, pi, z FROM moves WHERE tensor IS NOT NULL ORDER BY id DESC LIMIT {self.val_size} OFFSET {self.train_size}"
+            sql = f"SELECT tensor, pi, z FROM self_play_moves WHERE tensor IS NOT NULL ORDER BY id DESC LIMIT {self.val_size} OFFSET {self.train_size}"
 
         cur = conn.execute(sql)
         for row in cur:
@@ -526,6 +545,9 @@ def main():
             try:
                 # 运行一盘对局
                 game_data = play_against_opponent(net, model_plays_as=model_side)
+                # ---存储新数据 ---
+                log(f"\n--- [第 {gen} 代] 存储阶段 ---")
+                save_game_to_db(game_data, DB_PATH)
                 all_new_game_data.extend(game_data)
                 log(f"对局 {i+1} 结束。目前共收集到 {len(all_new_game_data)} 条新数据。")
                 
@@ -533,11 +555,7 @@ def main():
                 log(f"[!!!] 对局 {i+1} 发生严重错误: {e}")
                 import traceback
                 traceback.print_exc()
-
-        # --- 步骤 3: 存储新数据 ---
-        log(f"\n--- [第 {gen} 代] 存储阶段 ---")
-        save_game_to_db(all_new_game_data, DB_PATH)
-
+        
         # --- 步骤 4: 训练模型 ---
         log(f"\n--- [第 {gen} 代] 训练阶段 ---")
         # 'net' 对象包含了已加载的模型，train 函数将在此基础上继续训练

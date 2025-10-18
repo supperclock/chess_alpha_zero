@@ -233,7 +233,7 @@ def play_against_opponent(net, model_plays_as='red'):
         #记录结果到数据库
         with sqlite3.connect(DB_PATH) as conn:
             conn.execute("""
-                         INSERT INTO self_play_results (steps,winner,updat_time) VALUES (?, ?, datetime('now', 'localtime'))
+                         INSERT INTO self_play_results (steps,winner,update_time) VALUES (?, ?, datetime('now', 'localtime'))
                          """, 
                          (len(final_examples), str_model_win))
         return final_examples

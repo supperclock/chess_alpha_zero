@@ -51,8 +51,8 @@ NUM_GENERATIONS      = 100
 GAMES_PER_GENERATION = 20
 
 # === 针对固定AI学习的新增参数 ===
-SAVE_ONLY_WIN_GAMES = True   # 只保存模型赢棋的(s, pi, z)
-LOSS_EXAMPLE_WEIGHT = 0.2    # 当不保存输局时无效；若保存则权重
+SAVE_ONLY_WIN_GAMES = False   # 只保存模型赢棋的(s, pi, z)
+LOSS_EXAMPLE_WEIGHT = 1    # 当不保存输局时无效；若保存则权重
 PRUNE_DB_MAX_ROWS   = 50000  # 数据库中保留的最大 self_play_moves 行数，超过则删除最旧
 
 # MCTS 根节点探索噪声（Dirichlet）

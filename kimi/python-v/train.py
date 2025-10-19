@@ -37,6 +37,7 @@ PATIENCE         = 3               # 连续 N 个 epoch 验证损失没有改善
 # --- 新增：强化学习循环超参数 ---
 NUM_GENERATIONS      = 100         # 总共进行多少代 "对弈-训练" 循环
 GAMES_PER_GENERATION = 20          # 每一代（每轮）对弈多少盘棋
+MAX_TRAIN_ROWS       = 500000      # [!!!] 新增：只使用最新的 50 万条数据进行训练
 
 os.makedirs(MODEL_DIR, exist_ok=True)
 
@@ -223,19 +224,14 @@ def play_against_opponent(net, model_plays_as='red'):
             (tensor, pi_vec, game_z if who_played == 'black' else -game_z)
             for tensor, pi_vec, who_played in model_examples
         ]
-        str_model_win = 'model_win'
-        if model_plays_as == winner:
-            log("  模型 胜利！")
-        else:
-            log("  模型 失败！")
-            str_model_win = 'model_lose'
+        log(f"  获胜方: {winner}")
         log(f"本局为模型 ({model_plays_as}) 收集到 {len(final_examples)} 条训练数据。")
         #记录结果到数据库
         with sqlite3.connect(DB_PATH) as conn:
             conn.execute("""
                          INSERT INTO self_play_results (steps,winner,update_time) VALUES (?, ?, datetime('now', 'localtime'))
                          """, 
-                         (len(final_examples), str_model_win))
+                         (len(final_examples), winner))
         return final_examples
 
     while True:
@@ -248,35 +244,35 @@ def play_against_opponent(net, model_plays_as='red'):
             return end_game(winner, side, f"{side} 方无合法走法，判负。")
 
         # === 2. 执行走棋逻辑 ===
-        if side == model_plays_as:
-            # 动态设置温度
-            current_temp = TAU if step < 30 else 0.1 # <--- 修改点：前30步用TAU (1.0)
+        # if side == model_plays_as:
+        # 动态设置温度
+        current_temp = TAU if step < 30 else 0.1 # <--- 修改点：前30步用TAU (1.0)
 
-            log(f"  (我方 MCTS) 正在为 {side} 方思考... (Temp={current_temp})")
-            pi, v = mcts_policy(net, board, side, temperature=current_temp) # <--- 修改点
-            if not pi:  # 理论上不会发生，但保险
-                winner = 'red' if side == 'black' else 'black'
-                return end_game(winner, side, f"{side} 方 MCTS 无棋可走。")
+        log(f"   正在为 {side} 方思考... (Temp={current_temp})")
+        pi, v = mcts_policy(net, board, side, temperature=current_temp) # <--- 修改点
+        if not pi:  # 理论上不会发生，但保险
+            winner = 'red' if side == 'black' else 'black'
+            return end_game(winner, side, f"{side} 方 MCTS 无棋可走。")
 
-            # 存储训练样本
-            tensor = board_to_tensor(board, side).squeeze(0)
-            pi_vec = torch.zeros(len(MOVE_TO_INDEX))
-            for m, prob in pi.items():
-                key = (m.fy, m.fx, m.ty, m.tx)
-                if key in MOVE_TO_INDEX:
-                    pi_vec[MOVE_TO_INDEX[key]] = prob
-            model_examples.append((tensor, pi_vec, side))
+        # 存储训练样本
+        tensor = board_to_tensor(board, side).squeeze(0)
+        pi_vec = torch.zeros(len(MOVE_TO_INDEX))
+        for m, prob in pi.items():
+            key = (m.fy, m.fx, m.ty, m.tx)
+            if key in MOVE_TO_INDEX:
+                pi_vec[MOVE_TO_INDEX[key]] = prob
+        model_examples.append((tensor, pi_vec, side))
 
-            # 按概率选择走法
-            moves, probs = list(pi.keys()), list(pi.values())
-            move = random.choices(moves, weights=probs)[0]
-            log(f"  (我方 MCTS) 选择：{move.fy}{move.fx} → {move.ty}{move.tx}")
+        # 按概率选择走法
+        moves, probs = list(pi.keys()), list(pi.values())
+        move = random.choices(moves, weights=probs)[0]
+        log(f"   选择：{move.fy}{move.fx} → {move.ty}{move.tx}")
 
-        else:
-            move = get_opponent_move(board, side)
-            if move is None:
-                winner = 'red' if side == 'black' else 'black'
-                return end_game(winner, side, f"{side} 方接口无走法。")
+        # else:
+        #     move = get_opponent_move(board, side)
+        #     if move is None:
+        #         winner = 'red' if side == 'black' else 'black'
+        #         return end_game(winner, side, f"{side} 方接口无走法。")
 
         # === 3. 执行走法并检测终局 ===
         make_move(board, move)
@@ -343,12 +339,22 @@ class SQLiteChessDataset(IterableDataset):
             self.val_size = 0
             self.train_size = 0
         else:
-            self.val_size = int(total_rows * split_ratio)
-            self.train_size = total_rows - self.val_size
-            # 确保验证集至少有一批数据（如果数据总量允许）
-            if self.val_size == 0 and total_rows > BATCH_SIZE:
+            # 1. 确定我们最多使用多少数据
+            total_usable_rows = min(total_rows, MAX_TRAIN_ROWS)
+            log(f"数据库总行数: {total_rows}。将使用最新的 {total_usable_rows} 条数据进行训练/验证。")
+
+            # 2. 从这部分数据中切分验证集
+            self.val_size = int(total_usable_rows * split_ratio)
+            self.train_size = total_usable_rows - self.val_size
+            
+            # 3. 确保验证集至少有一批数据（如果数据总量允许）
+            if self.val_size == 0 and total_usable_rows > BATCH_SIZE * 2: # 保证训练集也至少有一批
                 self.val_size = BATCH_SIZE
-                self.train_size = max(0, total_rows - self.val_size)
+                self.train_size = total_usable_rows - self.val_size
+            
+            # 4. 计算需要跳过多少条 "非常旧" 的数据
+            self.offset = max(0, total_rows - total_usable_rows)
+            # --- 修改结束 ---
 
     def __len__(self):
         # 估算长度（用于tqdm）
@@ -365,15 +371,22 @@ class SQLiteChessDataset(IterableDataset):
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         
+        # --- 修改开始：调整 SQL 查询以使用 offset ---
+        
+        # 我们先构建一个基础查询，它只选择 "滑动窗口" 内的数据
+        # (注意：OFFSET 在 LIMIT 之前)
+        base_sql = f"FROM self_play_moves WHERE tensor IS NOT NULL ORDER BY id DESC LIMIT {self.train_size + self.val_size} OFFSET {self.offset}"
+
         if self.split == 'train':
-            # 训练集：取最新的 N 条数据（N = train_size）
-            sql = f"SELECT tensor, pi, z FROM (SELECT * FROM self_play_moves WHERE tensor IS NOT NULL ORDER BY id DESC LIMIT {self.train_size}) AS T"
+            # 训练集：取窗口中的最新 N 条
+            sql = f"SELECT tensor, pi, z FROM (SELECT * {base_sql}) AS T ORDER BY id DESC LIMIT {self.train_size}"
             if self.shuffle:
-                sql += " ORDER BY RANDOM()"
+                # 在窗口数据上随机化
+                sql = f"SELECT * FROM ({sql}) AS T_SHUFFLE ORDER BY RANDOM()"
         else: # validation
-            # 验证集：从最新的 N 条（训练集）数据 *之前* 取 M 条（M = val_size）
-            # 这样确保了训练集和验证集不重叠
-            sql = f"SELECT tensor, pi, z FROM self_play_moves WHERE tensor IS NOT NULL ORDER BY id DESC LIMIT {self.val_size} OFFSET {self.train_size}"
+            # 验证集：取窗口中紧邻训练集的 M 条
+            sql = f"SELECT tensor, pi, z FROM (SELECT * {base_sql}) AS T ORDER BY id DESC LIMIT {self.val_size} OFFSET {self.train_size}"
+        # --- 修改结束 ---
 
         cur = conn.execute(sql)
         for row in cur:
@@ -547,7 +560,7 @@ def main():
             
             try:
                 # 运行一盘对局
-                game_data = play_against_opponent(net, model_plays_as=model_side)
+                game_data = play_against_opponent(net)
                 # ---存储新数据 ---
                 log(f"\n--- [第 {gen} 代] 存储阶段 ---")
                 save_game_to_db(game_data, DB_PATH)

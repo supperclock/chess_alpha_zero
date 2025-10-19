@@ -47,7 +47,7 @@ VALIDATION_SPLIT = 0.1
 PATIENCE         = 3
 
 # 强化学习循环
-NUM_GENERATIONS      = 100
+NUM_GENERATIONS      = 1
 GAMES_PER_GENERATION = 20
 
 # === 针对固定AI学习的新增参数 ===
@@ -548,7 +548,7 @@ def compute_recent_winrate(n=WINRATE_WINDOW):
         return wins / len(rows)
 
 # ---------------- 主循环（保持逻辑，但每代输出胜率并可调整策略） ----------------
-def main():
+def generate_data():
     setup_database()
 
     model_path = os.path.join(MODEL_DIR, "best_model.pth")
@@ -591,17 +591,56 @@ def main():
         # 每代结束后，统计最近胜率
         winrate = compute_recent_winrate(WINRATE_WINDOW)
         if winrate is not None:
-            log(f"最近 {WINRATE_WINDOW} 盘模型对固定 AI 的胜率: {winrate*100:.2f}%")
-
-        log(f"\n--- [第 {gen} 代] 训练阶段 ---")
-        train(net, MODEL_DIR)
-
-        model_path = os.path.join(MODEL_DIR, "best_model.pth")
-        log(f"第 {gen} 代训练完成。下一代将使用 '{model_path}' 进行对弈。")
+            log(f"最近 {WINRATE_WINDOW} 盘模型对固定 AI 的胜率: {winrate*100:.2f}%")        
 
     log("="*60)
     log(f"所有 {NUM_GENERATIONS} 代强化学习已完成。")
     log("="*60)
 
+def train_only():
+    model_path = os.path.join(MODEL_DIR, "best_model.pth")
+    if not os.path.exists(model_path):
+        model_path = os.path.join(MODEL_DIR, "latest.pth")
+        if not os.path.exists(model_path):
+            log("未找到任何模型权重。将从头开始训练 (如果 NN_Interface 支持)。")
+            model_path = None
+        else:
+            log(f"未找到 'best_model.pth'，将从 '{model_path}' 开始。")
+    else:
+        log(f"将从 '{model_path}' 开始。")
+    log(f"正在加载模型: {model_path or '新模型'}")
+    net = NN_Interface(model_path=model_path)
+    net.model.to(DEVICE)
+    log(f"\n---  训练阶段 ---")
+    train(net, MODEL_DIR)
+
+    model_path = os.path.join(MODEL_DIR, "best_model.pth")
+    log(f"训练完成。下一代将使用 '{model_path}' 进行对弈。")
+    
+
+import argparse
+from enum import Enum
+
+class RunMode(Enum):
+    PLAY = "play"   # 只下自走棋，把数据写库
+    TRAIN = "train" # 只训练，使用库里已有数据
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="AlphaZero-style 训练脚本")
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=[e.value for e in RunMode],
+        default=RunMode.PLAY.value,
+        help="play: 只生成数据；train: 只训练",
+    )
+    return parser.parse_args()
+
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    if args.mode == RunMode.PLAY.value:
+        generate_data()
+    elif args.mode == RunMode.TRAIN.value:
+        train_only()
+    else:
+        raise ValueError(f"未知模式: {args.mode}")

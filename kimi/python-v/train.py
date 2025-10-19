@@ -398,10 +398,11 @@ class SQLiteChessDataset(IterableDataset):
             sql = f"SELECT tensor, pi, z, weight FROM self_play_moves WHERE tensor IS NOT NULL ORDER BY id DESC LIMIT {self.val_size} OFFSET {self.train_size}"
         cur = conn.execute(sql)
         for row in cur:
+            weight_val = float(row['weight']) if 'weight' in row.keys() else 1.0
             yield (pickle.loads(row['tensor']),
                    pickle.loads(row['pi']),
                    torch.tensor(row['z'], dtype=torch.float32),
-                   float(row.get('weight', 1.0)))
+                   weight_val)
         conn.close()
 
 # ---------------- 训练（使用样本权重 & reward scaling） ----------------

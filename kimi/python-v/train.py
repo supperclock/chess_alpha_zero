@@ -206,7 +206,7 @@ def get_opponent_move(board, side) -> Move:
     # --- 示例结束 ---
 
 
-def play_against_opponent(net, model_plays_as='red'):
+def play_against_opponent(net):
     """
     运行一盘对局：我们的 MCTS 模型 vs 对手接口
     当任意一方无合法走法时自动判负。
@@ -225,7 +225,7 @@ def play_against_opponent(net, model_plays_as='red'):
             for tensor, pi_vec, who_played in model_examples
         ]
         log(f"  获胜方: {winner}")
-        log(f"本局为模型 ({model_plays_as}) 收集到 {len(final_examples)} 条训练数据。")
+        log(f"本局收集到 {len(final_examples)} 条训练数据。")
         #记录结果到数据库
         with sqlite3.connect(DB_PATH) as conn:
             conn.execute("""

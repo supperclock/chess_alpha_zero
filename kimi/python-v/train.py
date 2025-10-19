@@ -445,7 +445,7 @@ def train(net, model_dir):
             # item 是 (tensor, pi, z, weight)
             board_tensor, pi_vec, z, weight = item
             board_tensor, pi_vec, z = board_tensor.to(DEVICE), pi_vec.to(DEVICE), z.to(DEVICE)
-            weight = torch.tensor([weight], device=DEVICE)
+            weight = torch.tensor(weight, device=DEVICE)
 
             pred_pi, pred_v = net.model(board_tensor)
             # 原始逐样本策略损失（未平均）
@@ -617,6 +617,11 @@ def train_only():
     model_path = os.path.join(MODEL_DIR, "best_model.pth")
     log(f"训练完成。下一代将使用 '{model_path}' 进行对弈。")
     
+def gen_train_recycle():
+    while True:
+        generate_data()
+        train_only()
+
 
 import argparse
 from enum import Enum
@@ -624,6 +629,7 @@ from enum import Enum
 class RunMode(Enum):
     PLAY = "play"   # 只下自走棋，把数据写库
     TRAIN = "train" # 只训练，使用库里已有数据
+    PLAY_AND_TRAIN = "recycle"
 
 def parse_args():
     parser = argparse.ArgumentParser(description="AlphaZero-style 训练脚本")
@@ -632,7 +638,7 @@ def parse_args():
         type=str,
         choices=[e.value for e in RunMode],
         default=RunMode.PLAY.value,
-        help="play: 只生成数据；train: 只训练",
+        help="play: 只生成数据；train: 只训练;recycle:生成数据+训练-循环执行",
     )
     return parser.parse_args()
 
@@ -642,5 +648,7 @@ if __name__ == "__main__":
         generate_data()
     elif args.mode == RunMode.TRAIN.value:
         train_only()
+    elif args.mode == RunMode.PLAY_AND_TRAIN.value:
+        gen_train_recycle()
     else:
         raise ValueError(f"未知模式: {args.mode}")

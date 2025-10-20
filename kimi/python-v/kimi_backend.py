@@ -4,6 +4,7 @@ import os
 from ai import check_game_over,minimax_root
 from util import log
 from ai_bridge import find_best_move_c
+from ai_bridge2 import find_best_move_c2
 # from ai_gpt_bridge import find_best_move_c
 
 app = Flask(__name__)
@@ -24,9 +25,10 @@ def ai_move():
         
     board_state = data['board']
     side_to_move = data['side']
-    #python与c版对弈
+    
     if side_to_move == 'red':
-        best_move = minimax_root(board_state, side_to_move)
+        # best_move = minimax_root(board_state, side_to_move)
+        best_move = find_best_move_c2(board_state, side_to_move)
     else:
         best_move = find_best_move_c(board_state, side_to_move)
     

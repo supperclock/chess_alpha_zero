@@ -134,3 +134,106 @@ int in_check(const Board *b, Side side) {
 
     return 0;
 }
+
+/* square_attacked: 检查 square (tx,ty) 是否被 attacker_side 攻击
+   简化但包含关键攻击形式：车/炮 直线、炮跳跃、马（马脚）、兵（前进/横吃）、相/仕/将 */
+int square_attacked(const Board *b, int tx, int ty, Side attacker_side) {
+    /* rooks and cannons: straight lines */
+    const int D4[4][2] = {{1,0},{-1,0},{0,1},{0,-1}};
+    for (int d=0; d<4; d++) {
+        int dx = D4[d][0], dy = D4[d][1];
+        int nx = tx + dx, ny = ty + dy;
+        int blocked = 0;
+        while (nx>=0 && nx<COLS && ny>=0 && ny<ROWS) {
+            Piece p = b->sq[ny][nx];
+            if (p.type != PT_NONE) {
+                if (p.side == attacker_side) {
+                    if (!blocked && p.type == PT_ROOK) return 1;
+                    if (blocked && p.type == PT_CANNON) return 1;
+                }
+                blocked++;
+            }
+            nx += dx; ny += dy;
+        }
+    }
+
+    /* horse attacks (consider leg) */
+    const int H8[8][2] = {{1,2},{2,1},{-1,2},{-2,1},{1,-2},{2,-1},{-1,-2},{-2,-1}};
+    for (int i=0;i<8;i++) {
+        int dx = H8[i][0], dy = H8[i][1];
+        int sx = tx - dx, sy = ty - dy; /* source square where attacker horse would stand */
+        if (sx<0||sx>=COLS||sy<0||sy>=ROWS) continue;
+        int legx, legy;
+        if (abs(dx) == 2) { legx = sx + dx/2; legy = sy; }
+        else { legx = sx; legy = sy + dy/2; }
+        if (legx<0||legx>=COLS||legy<0||legy>=ROWS) continue;
+        if (b->sq[legy][legx].type != PT_NONE) continue; /* leg blocked */
+        Piece p = b->sq[sy][sx];
+        if (p.side == attacker_side && p.type == PT_HORSE) return 1;
+    }
+
+    /* pawn attacks */
+    /* attacker_side's pawn attacks forward (depends on side) */
+    if (attacker_side == SIDE_RED) {
+        /* red pawns move +y */
+        int sy = ty - 1;
+        if (sy>=0) {
+            if (tx-1>=0) { Piece p = b->sq[sy][tx-1]; if (p.side==attacker_side && p.type==PT_PAWN) return 1; }
+            if (tx+1<COLS) { Piece p = b->sq[sy][tx+1]; if (p.side==attacker_side && p.type==PT_PAWN) return 1; }
+        }
+        /* horizontal after crossing river */
+        int sy2 = ty;
+        if (sy2 >= 5) { /* red pawn past river can attack sideways */
+            if (tx-1>=0) { Piece p = b->sq[sy2][tx-1]; if (p.side==attacker_side && p.type==PT_PAWN) return 1; }
+            if (tx+1<COLS) { Piece p = b->sq[sy2][tx+1]; if (p.side==attacker_side && p.type==PT_PAWN) return 1; }
+        }
+    } else if (attacker_side == SIDE_BLACK) {
+        int sy = ty + 1;
+        if (sy<ROWS) {
+            if (tx-1>=0) { Piece p = b->sq[sy][tx-1]; if (p.side==attacker_side && p.type==PT_PAWN) return 1; }
+            if (tx+1<COLS) { Piece p = b->sq[sy][tx+1]; if (p.side==attacker_side && p.type==PT_PAWN) return 1; }
+        }
+        int sy2 = ty;
+        if (sy2 <= 4) {
+            if (tx-1>=0) { Piece p = b->sq[sy2][tx-1]; if (p.side==attacker_side && p.type==PT_PAWN) return 1; }
+            if (tx+1<COLS) { Piece p = b->sq[sy2][tx+1]; if (p.side==attacker_side && p.type==PT_PAWN) return 1; }
+        }
+    }
+
+    /* advisor/elephant near palace and diagonals (conservative) */
+    const int D4O[4][2] = {{1,1},{1,-1},{-1,1},{-1,-1}};
+    for (int i=0;i<4;i++){
+        int sx = tx + D4O[i][0], sy = ty + D4O[i][1];
+        if (sx<0||sx>=COLS||sy<0||sy>=ROWS) continue;
+        Piece p = b->sq[sy][sx];
+        if (p.side == attacker_side && (p.type == PT_ADVISOR)) return 1;
+    }
+    const int E4[4][2] = {{2,2},{2,-2},{-2,2},{-2,-2}};
+    for (int i=0;i<4;i++){
+        int sx = tx + E4[i][0], sy = ty + E4[i][1];
+        if (sx<0||sx>=COLS||sy<0||sy>=ROWS) continue;
+        int mx = tx + E4[i][0]/2, my = ty + E4[i][1]/2;
+        if (mx<0||mx>=COLS||my<0||my>=ROWS) continue;
+        if (b->sq[my][mx].type != PT_NONE) continue;
+        Piece p = b->sq[sy][sx];
+        if (p.side == attacker_side && p.type == PT_ELEPHANT) return 1;
+    }
+
+    /* general facing (opponent general in file with no blocking) */
+    for (int y=ty-1;y>=0;y--) {
+        Piece p = b->sq[y][tx];
+        if (p.type != PT_NONE) {
+            if (p.side == attacker_side && p.type == PT_GENERAL) return 1;
+            break;
+        }
+    }
+    for (int y=ty+1;y<ROWS;y++) {
+        Piece p = b->sq[y][tx];
+        if (p.type != PT_NONE) {
+            if (p.side == attacker_side && p.type == PT_GENERAL) return 1;
+            break;
+        }
+    }
+
+    return 0;
+}

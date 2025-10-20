@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "rules.h"
 
 /* ========== 常量定义 ========== */
 
@@ -11,8 +12,8 @@
 #define BONUS_ROOK_CONNECTION 40
 #define PENALTY_WEAK_KING 80
 
-static const int PIECE_VALUES_STD[] = {
-    0, 900, 400, 450, 250, 250, 10000, 100
+const int PIECE_VALUES_STD[] = {
+    0, 900, 500, 450, 250, 250, 10000, 100
 };
 
 /* 简单 PST（位置加分表，可按需微调） */
@@ -161,6 +162,17 @@ int evaluate_board(const Board *board_state) {
     /* 王安全 */
     score -= king_safety_penalty(board_state, SIDE_BLACK);
     score -= king_safety_penalty(board_state, SIDE_RED);
+
+    for (int y=0; y<ROWS; y++) {
+        for (int x=0; x<COLS; x++) {
+            Piece p = board_state->sq[y][x];
+            if (p.type == PT_NONE) continue;
+            Side opp = (p.side == SIDE_RED) ? SIDE_BLACK : SIDE_RED;
+            if (square_attacked(board_state, x, y, opp)) {
+                score -= PIECE_VALUES_STD[p.type] / 4; // 暴露风险
+            }
+        }
+    }
 
     return score;
 }

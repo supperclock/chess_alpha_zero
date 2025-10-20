@@ -25,44 +25,44 @@ def ai_move():
     board_state = data['board']
     side_to_move = data['side']
     #python与c版对弈
-    # if side_to_move == 'red':
-    #     best_move = minimax_root(board_state, side_to_move)
-    # else:
-    #     best_move = find_best_move_c(board_state, side_to_move)
+    if side_to_move == 'red':
+        best_move = minimax_root(board_state, side_to_move)
+    else:
+        best_move = find_best_move_c(board_state, side_to_move)
     
-    best_move = nn_interface(board_state, side_to_move)
+    # best_move = nn_interface(board_state, side_to_move)
     log(f"Best move: {best_move}")
     return jsonify(best_move)    
     
 
 from nn_interface import NN_Interface
-from train import mcts_policy
+# from train import mcts_policy
 from nn_data_representation import board_to_tensor, MOVE_TO_INDEX
 import torch
 import random
 
 nn_player = NN_Interface(model_path="ckpt/latest.pth") 
 def nn_interface(board_state, side):      
-    pi, v = mcts_policy(nn_player, board_state, side, temperature=0)  
-    tensor, pi_vec = board_to_tensor(board_state, side).squeeze(0), torch.zeros(len(MOVE_TO_INDEX))
-    for move, prob in pi.items():
-        key = (move.fy, move.fx, move.ty, move.tx)
-        if key in MOVE_TO_INDEX: pi_vec[MOVE_TO_INDEX[key]] = prob   
-    moves, probs = list(pi.keys()), list(pi.values())
-    if not moves: # 确保列表非空
-        return None
-    move = random.choices(moves, weights=probs)[0]
-    return move.to_dict()
+    # pi, v = mcts_policy(nn_player, board_state, side, temperature=0)  
+    # tensor, pi_vec = board_to_tensor(board_state, side).squeeze(0), torch.zeros(len(MOVE_TO_INDEX))
+    # for move, prob in pi.items():
+    #     key = (move.fy, move.fx, move.ty, move.tx)
+    #     if key in MOVE_TO_INDEX: pi_vec[MOVE_TO_INDEX[key]] = prob   
+    # moves, probs = list(pi.keys()), list(pi.values())
+    # if not moves: # 确保列表非空
+    #     return None
+    # move = random.choices(moves, weights=probs)[0]
+    # return move.to_dict()
 
-    # _, policy = nn_player.predict(board_state, side)
-    # # 按概率从高到低排序并打印
-    # sorted_policy = sorted(policy.items(), key=lambda item: item[1], reverse=True)
-    # if not sorted_policy: # 确保列表非空
-    #     return None 
-    # for move, prob in sorted_policy[:5]: # 打印前5个最可能的走法
-    #     print(f"  - 走法: {move.to_dict()}, 概率: {prob:.4f}")
-    # log(sorted_policy[0][0].to_dict())
-    # return sorted_policy[0][0].to_dict()
+    _, policy = nn_player.predict(board_state, side)
+    # 按概率从高到低排序并打印
+    sorted_policy = sorted(policy.items(), key=lambda item: item[1], reverse=True)
+    if not sorted_policy: # 确保列表非空
+        return None 
+    for move, prob in sorted_policy[:5]: # 打印前5个最可能的走法
+        print(f"  - 走法: {move.to_dict()}, 概率: {prob:.4f}")
+    log(sorted_policy[0][0].to_dict())
+    return sorted_policy[0][0].to_dict()
 @app.route('/check_game_over', methods=['POST'])
 def check_game_over_endpoint():
     try:

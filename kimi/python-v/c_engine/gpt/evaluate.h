@@ -27,6 +27,8 @@
 #define BONUS_ROOK_CONNECTION 40   /* 车连线加分 */
 #define PENALTY_WEAK_KING    80    /* 王安全惩罚 */
 
+/* 全局棋子价值表（供 search.c 引用） */
+extern const int PIECE_VALUES_STD[8];
 /* ---- 主接口 ---- */
 int evaluate_board(const Board *board_state);
 

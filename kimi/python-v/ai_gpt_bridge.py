@@ -79,11 +79,11 @@ c_engine.evaluate_board_c.restype = ctypes.c_int
 
 PIECE_NAME_TO_TYPE = {
     "帥": 6, "將": 6,
-    "仕": 4, "士": 4,
-    "相": 3, "象": 3,
-    "馬": 2, "马": 2,
+    "仕": 5, "士": 5,
+    "相": 4, "象": 4,
+    "馬": 3, "马": 3,
     "車": 1, "车": 1,
-    "炮": 5, "砲": 5,
+    "炮": 2, "砲": 2,
     "兵": 7, "卒": 7,
 }
 
@@ -115,7 +115,7 @@ def c_move_to_dict(c_move):
 # 四、高层 Python 调用接口
 # ==========================================================
 
-def find_best_move_c(board_state_py, side_py, depth=6, time_limit_ms=2000):
+def find_best_move_c(board_state_py, side_py, depth=16, time_limit_ms=12000):
     """
     从 Python 调用 C 引擎搜索最佳走法。
     Args:

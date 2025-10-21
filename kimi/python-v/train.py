@@ -215,13 +215,31 @@ def get_opponent_move(board, side) -> Move:
     log(f"  (对手) 正在为 {side} 方思考...")
     return find_best_move_c_for_train(board, side)
 
-# ---------------- 对局运行 ----------------
+# ---------------- [新增] 棋盘哈希函数 ----------------
+def get_board_hash(board, side):
+    """生成一个唯一的棋盘+走棋方哈希值，用于检测循环。"""
+    hash_parts = []
+    # 象棋棋盘是 10 行 9 列
+    for y in range(10):
+        for x in range(9):
+            piece = board[y][x]
+            if piece:
+                # e.g., 'rG' (red General), 'bC' (black Cannon)
+                hash_parts.append(f"{piece['side'][0]}{piece['type']}")
+            else:
+                hash_parts.append('.')
+    return f"{''.join(hash_parts)}_{side}"
+
+# ---------------- [修改] 对局运行 (增加循环检测) ----------------
 def play_against_opponent(net, model_plays_as='red'):
     board = copy_board(INITIAL_SETUP)
     side = 'red'
     step = 0
     model_examples = []
     opponent_moves_record = []
+    
+    # 新增：用于检测循环的字典
+    position_history = defaultdict(int)
 
     def end_game(winner, loser, reason):
         log(f"【对局结束】{reason}")
@@ -266,6 +284,18 @@ def play_against_opponent(net, model_plays_as='red'):
 
     while True:
         print_board_color(board, side)
+
+        # --- [修改] 循环检测 ---
+        # 在走棋前，检查当前局面（棋盘+走棋方）是否已重复
+        current_hash = get_board_hash(board, side)
+        position_history[current_hash] += 1
+        
+        if position_history[current_hash] >= 3:
+            # 当前方 (side) 造成了第三次重复，判负
+            winner = 'red' if side == 'black' else 'black'
+            loser = side
+            return end_game(winner, loser, f"循环走棋：{side} 方重复局面 3 次，判负。")
+        # --- 循环检测结束 ---
 
         legal_moves = generate_moves(board, side)
         if not legal_moves:

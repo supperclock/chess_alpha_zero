@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>象棋对弈</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="game-area">
+            <div id="chessboard"></div>
+            <div class="controls">
+                <button id="newGame">新游戏</button>
+                <button id="flipBoard">翻转棋盘</button>
+                <div id="info-panel">
+                    <div id="thinking" style="display: none;">思考中...</div>
+                    <div id="engine-info"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="{{ url_for('static', filename='js/board.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/websocket.js') }}"></script>
+</body>
+</html>

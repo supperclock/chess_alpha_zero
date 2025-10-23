@@ -13,6 +13,7 @@ let validMoves = [];
 let lastMoveFrom = null; // 存储上一步的起点位置 {x, y}
 let movesHistory = []; // 存储走子历史
 let recordModePositions = []; // 存储棋谱录制模式下的位置信息
+let isBoardFlipped = false; // 棋盘是否翻转
 
 // 检查并切换后端URL的函数
 async function checkAndSwitchBackend() {
@@ -61,6 +62,7 @@ function resetGame() {
     board = Array.from({length:ROWS},()=>Array(COLS).fill(null));
     currentSide = 'red';
     gameOver = false;
+    isBoardFlipped = false;
     hideStatus();
     initPieces();
     if (mode === 'ai-vs-ai') {
@@ -100,6 +102,44 @@ const initialPieces = {
   ]
 };
 
+// 翻转棋盘函数
+function flipBoard() {
+    isBoardFlipped = !isBoardFlipped;
+    
+    // 创建一个新的临时棋盘数组
+    const newBoard = Array.from({length: ROWS}, () => Array(COLS).fill(null));
+    
+    // 更新所有棋子的位置和内部board数组
+    for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+            const piece = board[y][x];
+            if (piece) {
+                // 计算翻转后的位置
+                const flippedX = COLS - 1 - x;
+                const flippedY = ROWS - 1 - y;
+                
+                // 更新棋子位置
+                piece.style.left = (25 + flippedX * 50 - 20) + 'px';
+                piece.style.top = (25 + flippedY * 50 - 20) + 'px';
+                
+                // 更新内部board数组
+                newBoard[flippedY][flippedX] = piece;
+            }
+        }
+    }
+    
+    // 替换内部board数组
+    board = newBoard;
+    
+    // 更新上一步提示点的位置（如果存在）
+    const moveOrigin = document.querySelector('.move-origin');
+    if (moveOrigin && lastMoveFrom) {
+        const flippedX = COLS - 1 - lastMoveFrom.x;
+        const flippedY = ROWS - 1 - lastMoveFrom.y;
+        moveOrigin.style.left = (25 + flippedX * 50 - 6) + 'px';
+        moveOrigin.style.top = (25 + flippedY * 50 - 6) + 'px';
+    }
+}
 
 /* ========== 游戏流程和渲染 ========== */
 function initBoard(){
@@ -113,13 +153,19 @@ function initBoard(){
             setTimeout(aiMove, 1000);
         }
     });
+    
+    // 添加翻转棋盘按钮事件监听器
+    const flipBtn = document.getElementById('flip-btn');
+    flipBtn.addEventListener('click', flipBoard);
 }
+
 window.addEventListener('DOMContentLoaded', initBoard);
 
 function xy(el){
   const b = document.getElementById('chessboard').getBoundingClientRect();
-  const x = Math.round((el.offsetLeft + 20 - 25) / 50);
-  const y = Math.round((el.offsetTop  + 20 - 25) / 50);
+  let x = Math.round((el.offsetLeft + 20 - 25) / 50);
+  let y = Math.round((el.offsetTop  + 20 - 25) / 50);
+  
   return {x,y};
 }
 
@@ -194,6 +240,7 @@ async function tryMove(move) {
     fromDot.style.left = (25 + fromX * 50 - 6) + 'px';
     fromDot.style.top = (25 + fromY * 50 - 6) + 'px';
     document.getElementById('chessboard').appendChild(fromDot);
+    lastMoveFrom = {x: fromX, y: fromY}; // 保存上一步位置
 
     document.querySelectorAll('.piece').forEach(p => p.classList.remove('last-move'));
     pieceEl.classList.add('last-move');
@@ -404,6 +451,7 @@ function clearHints() {
     document.querySelectorAll('.valid-move-hint').forEach(h => h.remove());
 }
 
+// 修复棋盘翻转后的走法规则
 function canMoveOn(fx, fy, tx, ty, side) {
     const piece = board[fy][fx];
     if (!piece || (side === 'red' && !piece.classList.contains('red-piece')) || (side === 'black' && !piece.classList.contains('black-piece'))) return false;
@@ -415,54 +463,85 @@ function canMoveOn(fx, fy, tx, ty, side) {
     if (fx === tx && fy === ty) return false;
     // 不能越界
     if (tx < 0 || tx >= COLS || ty < 0 || ty >= ROWS) return false;
+    
+    // 考虑棋盘翻转的情况
+    let actualFX = isBoardFlipped ? COLS - 1 - fx : fx;
+    let actualFY = isBoardFlipped ? ROWS - 1 - fy : fy;
+    let actualTX = isBoardFlipped ? COLS - 1 - tx : tx;
+    let actualTY = isBoardFlipped ? ROWS - 1 - ty : ty;
+    
+    // 【修复】: 不再翻转 side。我们使用原始的 side 和 原始的(actual)坐标系进行判断。
+    // let actualSide = side; // <- 这一整块逻辑都删掉
+    // if (isBoardFlipped) {
+    //     actualSide = side === 'red' ? 'black' : 'red';
+    // }
+    
     // 走法规则
-    if (["兵","卒"].includes(name)) {
+    if (name === '兵' || name === '卒') {
         // 兵/卒
-        let forward = side === 'red' ? 1 : -1;
-        let isAcrossRiver = (side === 'red' && fy >= 5) || (side === 'black' && fy <= 4);
-        if (tx === fx && ty === fy + forward) return true;
-        if (isAcrossRiver && Math.abs(tx - fx) === 1 && ty === fy) return true;
+        let forward = side === 'red' ? 1 : -1; // <-- 【修复】使用 side
+        let isAcrossRiver = (side === 'red' && actualFY >= 5) || (side === 'black' && actualFY <= 4); // <-- 【修复】使用 side
+        if (actualTX === actualFX && actualTY === actualFY + forward) return true;
+        if (isAcrossRiver && Math.abs(actualTX - actualFX) === 1 && actualTY === actualFY) return true;
         return false;
-    } else if (["車","车"].includes(name)) {
+    } else if (name === '車' || name === '车') {
         // 车
-        if (fx === tx) {
-            let minY = Math.min(fy, ty), maxY = Math.max(fy, ty);
+        if (actualFX === actualTX) {
+            let minY = Math.min(actualFY, actualTY), maxY = Math.max(actualFY, actualTY);
             for (let i = minY + 1; i < maxY; i++) {
-                if (board[i][fx]) return false;
+                // 需要将检查坐标转换回原始坐标系
+                const checkY = isBoardFlipped ? ROWS - 1 - i : i;
+                const checkX = isBoardFlipped ? COLS - 1 - actualFX : actualFX;
+                if (board[checkY][checkX]) return false;
             }
             return true;
-        } else if (fy === ty) {
-            let minX = Math.min(fx, tx), maxX = Math.max(fx, tx);
+        } else if (actualFY === actualTY) {
+            let minX = Math.min(actualFX, actualTX), maxX = Math.max(actualFX, actualTX);
             for (let i = minX + 1; i < maxX; i++) {
-                if (board[fy][i]) return false;
+                // 需要将检查坐标转换回原始坐标系
+                const checkY = isBoardFlipped ? ROWS - 1 - actualFY : actualFY;
+                const checkX = isBoardFlipped ? COLS - 1 - i : i;
+                if (board[checkY][checkX]) return false;
             }
             return true;
         }
         return false;
-    } else if (["馬","马"].includes(name)) {
+    } else if (name === '馬' || name === '马') {
         // 马
-        let dx = Math.abs(tx - fx), dy = Math.abs(ty - fy);
+        let dx = Math.abs(actualTX - actualFX), dy = Math.abs(actualTY - actualFY);
         if (!((dx === 1 && dy === 2) || (dx === 2 && dy === 1))) return false;
         if (dx === 1) {
-            let blockY = fy + (ty > fy ? 1 : -1);
-            if (board[blockY][fx]) return false;
+            let blockY = actualFY + (actualTY > actualFY ? 1 : -1);
+            // 需要将检查坐标转换回原始坐标系
+            const checkY = isBoardFlipped ? ROWS - 1 - blockY : blockY;
+            const checkX = isBoardFlipped ? COLS - 1 - actualFX : actualFX;
+            if (board[checkY][checkX]) return false;
         } else {
-            let blockX = fx + (tx > fx ? 1 : -1);
-            if (board[fy][blockX]) return false;
+            let blockX = actualFX + (actualTX > actualFX ? 1 : -1);
+            // 需要将检查坐标转换回原始坐标系
+            const checkY = isBoardFlipped ? ROWS - 1 - actualFY : actualFY;
+            const checkX = isBoardFlipped ? COLS - 1 - blockX : blockX;
+            if (board[checkY][checkX]) return false;
         }
         return true;
-    } else if (["炮"].includes(name)) {
+    } else if (name === '炮') {
         // 炮
         let count = 0;
-        if (fx === tx) {
-            let minY = Math.min(fy, ty), maxY = Math.max(fy, ty);
+        if (actualFX === actualTX) {
+            let minY = Math.min(actualFY, actualTY), maxY = Math.max(actualFY, actualTY);
             for (let i = minY + 1; i < maxY; i++) {
-                if (board[i][fx]) count++;
+                // 需要将检查坐标转换回原始坐标系
+                const checkY = isBoardFlipped ? ROWS - 1 - i : i;
+                const checkX = isBoardFlipped ? COLS - 1 - actualFX : actualFX;
+                if (board[checkY][checkX]) count++;
             }
-        } else if (fy === ty) {
-            let minX = Math.min(fx, tx), maxX = Math.max(fx, tx);
+        } else if (actualFY === actualTY) {
+            let minX = Math.min(actualFX, actualTX), maxX = Math.max(actualFX, actualTX);
             for (let i = minX + 1; i < maxX; i++) {
-                if (board[fy][i]) count++;
+                // 需要将检查坐标转换回原始坐标系
+                const checkY = isBoardFlipped ? ROWS - 1 - actualFY : actualFY;
+                const checkX = isBoardFlipped ? COLS - 1 - i : i;
+                if (board[checkY][checkX]) count++;
             }
         } else {
             return false;
@@ -472,30 +551,33 @@ function canMoveOn(fx, fy, tx, ty, side) {
         } else {
             return count === 0;
         }
-    } else if (["帥","將"].includes(name)) {
+    } else if (name === '帥' || name === '將') {
         // 帅/将
-        let dx = Math.abs(tx - fx), dy = Math.abs(ty - fy);
+        let dx = Math.abs(actualTX - actualFX), dy = Math.abs(actualTY - actualFY);
         if (dx + dy !== 1) return false;
-        if (tx < 3 || tx > 5) return false;
-        if (side === 'red' && (ty < 0 || ty > 2)) return false;
-        if (side === 'black' && (ty < 7 || ty > 9)) return false;
+        if (actualTX < 3 || actualTX > 5) return false;
+        if (side === 'red' && (actualTY < 0 || actualTY > 2)) return false; // <-- 【修复】使用 side
+        if (side === 'black' && (actualTY < 7 || actualTY > 9)) return false; // <-- 【修复】使用 side
         return true;
-    } else if (["士","仕"].includes(name)) {
+    } else if (name === '士' || name === '仕') {
         // 士/仕
-        let dx = Math.abs(tx - fx), dy = Math.abs(ty - fy);
+        let dx = Math.abs(actualTX - actualFX), dy = Math.abs(actualTY - actualFY);
         if (dx !== 1 || dy !== 1) return false;
-        if (tx < 3 || tx > 5) return false;
-        if (side === 'red' && (ty < 0 || ty > 2)) return false;
-        if (side === 'black' && (ty < 7 || ty > 9)) return false;
+        if (actualTX < 3 || actualTX > 5) return false;
+        if (side === 'red' && (actualTY < 0 || actualTY > 2)) return false; // <-- 【修复】使用 side
+        if (side === 'black' && (actualTY < 7 || actualTY > 9)) return false; // <-- 【修复】使用 side
         return true;
-    } else if (["相","象"].includes(name)) {
+    } else if (name === '相' || name === '象') {
         // 相/象
-        let dx = Math.abs(tx - fx), dy = Math.abs(ty - fy);
+        let dx = Math.abs(actualTX - actualFX), dy = Math.abs(actualTY - actualFY);
         if (dx !== 2 || dy !== 2) return false;
-        if (side === 'red' && ty > 4) return false;
-        if (side === 'black' && ty < 5) return false;
-        let blockX = (fx + tx) / 2, blockY = (fy + ty) / 2;
-        if (board[blockY][blockX]) return false;
+        if (side === 'red' && actualTY > 4) return false; // <-- 【修复】使用 side
+        if (side === 'black' && actualTY < 5) return false; // <-- 【修复】使用 side
+        let blockX = (actualFX + actualTX) / 2, blockY = (actualFY + actualTY) / 2;
+        // 需要将检查坐标转换回原始坐标系
+        const checkY = isBoardFlipped ? ROWS - 1 - blockY : blockY;
+        const checkX = isBoardFlipped ? COLS - 1 - blockX : blockX;
+        if (board[checkY][checkX]) return false;
         return true;
     }
     return false;

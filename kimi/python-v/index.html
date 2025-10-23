@@ -199,6 +199,7 @@
             height: 25px;
             display: flex;
             justify-content: space-around;
+            justify-content: space-around;
             align-items: center;
             font-size: 20px;
             font-weight: bold;
@@ -334,9 +335,9 @@
             display: none;
         }
 
-        .pause-btn {
-            padding: 5px 32px;
-            font-size: 18px;
+        .control-btn {
+            padding: 5px 16px;
+            font-size: 16px;
             background: #f5deb3;
             color: #8b4513;
             border: 2px solid #8b4513;
@@ -344,12 +345,12 @@
             cursor: pointer;
             box-shadow: 0 2px 8px rgba(0,0,0,0.08);
             transition: background 0.2s, color 0.2s;
-            margin-top: 50px;
-            display: block;
-            margin-left: auto;
-            margin-right: auto;
+            margin-top: 20px;
+            display: inline-block;
+            margin-left: 10px;
+            margin-right: 10px;
         }
-        .pause-btn:hover {
+        .control-btn:hover {
             background: #ffe4b5;
             color: #d2691e;
         }
@@ -433,7 +434,10 @@
                     <div class="coordinate coordinate-y" style="top: 425px;">8</div>
                     <div class="coordinate coordinate-y" style="top: 475px;">9</div>
                 </div>
-                <button id="pause-btn" class="pause-btn">暂停</button>
+                <div style="text-align: center;">
+                    <button id="pause-btn" class="control-btn">暂停</button>
+                    <button id="flip-btn" class="control-btn">翻转棋盘</button>
+                </div>
                 <div id="game-status" class="game-status"></div>
             </div>
             </div>

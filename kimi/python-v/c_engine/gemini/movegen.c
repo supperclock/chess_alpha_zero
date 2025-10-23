@@ -13,9 +13,36 @@ Side get_piece_side(Piece p) {
     return -1; // 表示空位或错误
 }
 
+// --- 内部依赖函数声明 ---
+// (假设这些函数在 chess.h 中或链接时可用)
+extern int find_general(const BoardState* state, Side side, int* y, int* x);
+extern void make_move(BoardState* state, Move* move);
+extern void unmake_move(BoardState* state, const Move* move);
+extern int is_in_check(const BoardState* state, Side side);
+
+
+// --- MODIFIED: 新增走法生成上下文 ---
+//
+// 为了满足 "函数不要新增参数" 的要求，
+// 我们使用一个 file-scope (static) 的上下文变量。
+// generate_moves() 会在开始时设置这个变量，
+// 
+// 
+// 而其它走法生成函数 (兵/仕/相/帅) 会读取它。
+typedef struct {
+    int forward_dir;              // 兵的 "前进" 方向 (1 或 -1)
+    int palace_bottom;            // 九宫 "底" (0 或 7)
+    int palace_top;               // 九宫 "顶" (2 或 9)
+    int river_cross_line;         // 兵 "过河" 的 Y 坐标 (5 或 4)
+    int elephant_home_river_line; // 象 "不过河" 的 Y 坐标 (4 或 5)
+} MoveGenContext;
+
+// 定义这个静态上下文变量
+static MoveGenContext g_ctx;
+
 // --- 各个棋子的走法生成函数 ---
-// 这些函数生成的是“伪合法”走法，即只考虑棋子自身的规则，不考虑王是否被将军。
-// 它们都接收一个指向 move_list 的指针，并将生成的走法添加到列表中，然后返回生成的走法数量。
+
+// (车, 马, 炮 的函数没有改动，因为它们的走法与绝对方向无关)
 
 int gen_chariot_moves(const BoardState* state, int y, int x, Side side, Move* move_list) {
     int count = 0;
@@ -92,6 +119,7 @@ int gen_cannon_moves(const BoardState* state, int y, int x, Side side, Move* mov
     return count;
 }
 
+// --- MODIFIED: 不再使用 side 判断方向，而是读取 g_ctx ---
 int gen_elephant_moves(const BoardState* state, int y, int x, Side side, Move* move_list) {
     int count = 0;
     const int E_MOVES[4][2] = {{2, 2}, {2, -2}, {-2, 2}, {-2, -2}};
@@ -105,8 +133,14 @@ int gen_elephant_moves(const BoardState* state, int y, int x, Side side, Move* m
         int nx = x + E_MOVES[i][1];
         if (!is_inside(ny, nx)) continue;
 
-        // 检查是否过河
-        if ((side == RED && ny >= 5) || (side == BLACK && ny <= 4)) continue;
+        // --- MODIFIED: 使用 g_ctx 检查是否过河 ---
+        // g_ctx.elephant_home_river_line 是己方一侧的河界 (y=4 或 y=5)
+        // g_ctx.forward_dir 是己方的前进方向 (1 或 -1)
+        if (g_ctx.forward_dir == 1) { // 己方在下方 (e.g. Red)
+            if (ny > g_ctx.elephant_home_river_line) continue; // 目标点 y > 4 (即 >= 5) 则算过河
+        } else { // 己方在上方 (e.g. Black)
+            if (ny < g_ctx.elephant_home_river_line) continue; // 目标点 y < 5 (即 <= 4) 则算过河
+        }
         
         Piece target = state->board[ny][nx];
         if (target == EMPTY || get_piece_side(target) != side) {
@@ -116,6 +150,7 @@ int gen_elephant_moves(const BoardState* state, int y, int x, Side side, Move* m
     return count;
 }
 
+// --- MODIFIED: 不再使用 side 判断九宫，而是读取 g_ctx ---
 int gen_advisor_moves(const BoardState* state, int y, int x, Side side, Move* move_list) {
     int count = 0;
     const int A_MOVES[4][2] = {{1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
@@ -125,10 +160,9 @@ int gen_advisor_moves(const BoardState* state, int y, int x, Side side, Move* mo
         int nx = x + A_MOVES[i][1];
         if (!is_inside(ny, nx)) continue;
 
-        // 检查是否在九宫内
+        // --- MODIFIED: 使用 g_ctx 检查是否在九宫内 ---
         if (nx < 3 || nx > 5) continue;
-        if (side == RED && ny > 2) continue;
-        if (side == BLACK && ny < 7) continue;
+        if (ny < g_ctx.palace_bottom || ny > g_ctx.palace_top) continue; // 动态Y坐标检查
 
         Piece target = state->board[ny][nx];
         if (target == EMPTY || get_piece_side(target) != side) {
@@ -138,6 +172,7 @@ int gen_advisor_moves(const BoardState* state, int y, int x, Side side, Move* mo
     return count;
 }
 
+// --- MODIFIED: 不再使用 side 判断九宫，而是读取 g_ctx ---
 int gen_king_moves(const BoardState* state, int y, int x, Side side, Move* move_list) {
     int count = 0;
     const int K_MOVES[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
@@ -147,10 +182,9 @@ int gen_king_moves(const BoardState* state, int y, int x, Side side, Move* move_
         int nx = x + K_MOVES[i][1];
         if (!is_inside(ny, nx)) continue;
 
-        // 检查是否在九宫内
+        // --- MODIFIED: 使用 g_ctx 检查是否在九宫内 ---
         if (nx < 3 || nx > 5) continue;
-        if (side == RED && ny > 2) continue;
-        if (side == BLACK && ny < 7) continue;
+        if (ny < g_ctx.palace_bottom || ny > g_ctx.palace_top) continue; // 动态Y坐标检查
 
         Piece target = state->board[ny][nx];
         if (target == EMPTY || get_piece_side(target) != side) {
@@ -158,7 +192,7 @@ int gen_king_moves(const BoardState* state, int y, int x, Side side, Move* move_
         }
     }
 
-    // 飞将规则
+    // 飞将规则 (这段逻辑本身就是相对的，不需要修改)
     int opp_ky, opp_kx;
     if (find_general(state, (side == RED) ? BLACK : RED, &opp_ky, &opp_kx)) {
         if (x == opp_kx) {
@@ -179,9 +213,11 @@ int gen_king_moves(const BoardState* state, int y, int x, Side side, Move* move_
     return count;
 }
 
+// --- MODIFIED: 不再使用 side 判断方向，而是读取 g_ctx ---
 int gen_pawn_moves(const BoardState* state, int y, int x, Side side, Move* move_list) {
     int count = 0;
-    int forward = (side == RED) ? 1 : -1;
+    // --- MODIFIED: 使用 g_ctx "前进" 方向 ---
+    int forward = g_ctx.forward_dir;
 
     // 向前走
     int ny = y + forward;
@@ -192,8 +228,14 @@ int gen_pawn_moves(const BoardState* state, int y, int x, Side side, Move* move_
         }
     }
     
-    // 过河后可以横走
-    int river_crossed = (side == RED && y >= 5) || (side == BLACK && y <= 4);
+    // --- MODIFIED: 使用 g_ctx "过河" 检查 ---
+    int river_crossed;
+    if (g_ctx.forward_dir == 1) { // 己方在下方, 前进是 +1
+        river_crossed = (y >= g_ctx.river_cross_line); // river_cross_line = 5
+    } else { // 己方在上方, 前进是 -1
+        river_crossed = (y <= g_ctx.river_cross_line); // river_cross_line = 4
+    }
+    
     if (river_crossed) {
         for (int dx = -1; dx <= 1; dx += 2) {
             int nx = x + dx;
@@ -210,14 +252,50 @@ int gen_pawn_moves(const BoardState* state, int y, int x, Side side, Move* move_
 
 
 // --- 主走法生成函数 ---
-// 这是暴露给外部的唯一接口。
-// 它首先生成所有伪合法走法，然后逐一测试，过滤掉会导致自己王被将军的走法。
+// --- MODIFIED: 增加了 "找王" 和 "设置 g_ctx" 的预处理步骤 ---
 int generate_moves(BoardState* state, Move legal_move_list[]) {
     Move pseudo_legal_moves[MAX_MOVES];
     int pseudo_count = 0;
     Side current_side = state->side_to_move;
 
-    // 1. 生成所有伪合法走法
+    // --- NEW LOGIC START ---
+    int king_y = -1;
+    Piece king_piece = (current_side == RED) ? r_king : b_king;
+
+    // 1. 第一次遍历: 找到我方将/帅以确定方向
+    for (int y = 0; y < ROWS; ++y) {
+        for (int x = 0; x < COLS; ++x) {
+            if (state->board[y][x] == king_piece) {
+                king_y = y;
+                goto found_king; // 找到王，跳出双重循环
+            }
+        }
+    }
+
+found_king:
+    if (king_y == -1) {
+        return 0; // 棋盘上找不到王，没有合法走法
+    }
+
+    // 2. 根据王的位置，设置 file-scope 的 g_ctx 变量
+    if (king_y < 5) { // 判定为下方 (e.g. 传统红方)
+        g_ctx.forward_dir              = 1;
+        g_ctx.palace_bottom            = 0;
+        g_ctx.palace_top               = 2;
+        g_ctx.river_cross_line         = 5; // y >= 5 算过河
+        g_ctx.elephant_home_river_line = 4; // y <= 4 才算没过河
+    } else { // 判定为上方 (e.g. 传统黑方)
+        g_ctx.forward_dir              = -1;
+        g_ctx.palace_bottom            = 7;
+        g_ctx.palace_top               = 9;
+        g_ctx.river_cross_line         = 4; // y <= 4 算过河
+        g_ctx.elephant_home_river_line = 5; // y >= 5 才算没过河
+    }
+    // --- NEW LOGIC END ---
+
+
+    // 3. 第二次遍历: (原)生成所有伪合法走法
+    //    (函数调用签名不变，但它们内部会读取 g_ctx)
     for (int y = 0; y < ROWS; ++y) {
         for (int x = 0; x < COLS; ++x) {
             Piece p = state->board[y][x];
@@ -257,7 +335,7 @@ int generate_moves(BoardState* state, Move legal_move_list[]) {
         }
     }
 
-    // 2. 过滤伪合法走法，得到合法走法
+    // 4. (原)过滤伪合法走法，得到合法走法
     int legal_count = 0;
     for (int i = 0; i < pseudo_count; ++i) {
         Move current_move = pseudo_legal_moves[i];

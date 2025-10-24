@@ -3,19 +3,51 @@ const ROWS = 10, COLS = 9;
 const PRIMARY_BACKEND_URL = 'http://localhost:5000'; // 主后端服务器URL
 const FALLBACK_BACKEND_URL = 'http://localhost:5000'; // 备用后端服务器URL
 let BACKEND_URL = PRIMARY_BACKEND_URL; // 当前使用的后端URL
-let board = Array.from({length:ROWS},()=>Array(COLS).fill(null)); // 二维数组：存棋子 DOM
+
+// board 始终表示"逻辑坐标系"的棋盘：board[logicY][logicX] = piece DOM 或 null
+let board = Array.from({length:ROWS},()=>Array(COLS).fill(null));
 let currentSide = 'red';      // 红先
 let gameOver = false; // 游戏结束标志
 let isPaused = false;
 let mode = 'human-vs-ai'; // 默认人机对弈
+let humanSide = 'red'; // 默认人类执红方
 let selectedPiece = null;
 let validMoves = [];
-let lastMoveFrom = null; // 存储上一步的起点位置 {x, y}
+let lastMoveFrom = null; // 存储上一步的起点逻辑位置 {x, y}
 let movesHistory = []; // 存储走子历史
 let recordModePositions = []; // 存储棋谱录制模式下的位置信息
-let isBoardFlipped = false; // 棋盘是否翻转
+let isBoardFlipped = false; // 视觉是否翻转（只影响显示）
 
-// 检查并切换后端URL的函数
+/* 初始排布（使用逻辑坐标） */
+const initialPieces = {
+  red: [
+    {n:'帥',x:4,y:0},{n:'仕',x:3,y:0},{n:'仕',x:5,y:0},
+    {n:'相',x:2,y:0},{n:'相',x:6,y:0},{n:'馬',x:1,y:0},{n:'馬',x:7,y:0},
+    {n:'車',x:0,y:0},{n:'車',x:8,y:0},{n:'炮',x:1,y:2},{n:'炮',x:7,y:2},
+    {n:'兵',x:0,y:3},{n:'兵',x:2,y:3},{n:'兵',x:4,y:3},{n:'兵',x:6,y:3},{n:'兵',x:8,y:3}
+  ],
+  black: [
+    {n:'將',x:4,y:9},{n:'士',x:3,y:9},{n:'士',x:5,y:9},
+    {n:'象',x:2,y:9},{n:'象',x:6,y:9},{n:'馬',x:1,y:9},{n:'馬',x:7,y:9},
+    {n:'車',x:0,y:9},{n:'車',x:8,y:9},{n:'炮',x:1,y:7},{n:'炮',x:7,y:7},
+    {n:'卒',x:0,y:6},{n:'卒',x:2,y:6},{n:'卒',x:4,y:6},{n:'卒',x:6,y:6},{n:'卒',x:8,y:6}
+  ]
+};
+
+/* ========== 坐标转换（显示 <-> 逻辑） ========== */
+// 视觉坐标（display） ↔ 逻辑坐标（logic）互换。
+// 我们约定：所有对后端发送的数据与内部逻辑判断采用逻辑坐标。
+// 显示位置（DOM left/top）通过 toDisplayCoord(逻辑坐标) 得到。
+function toLogicCoord(x, y) {
+  if (!isBoardFlipped) return {x, y};
+  return { x: COLS - 1 - x, y: ROWS - 1 - y };
+}
+function toDisplayCoord(x, y) {
+  if (!isBoardFlipped) return {x, y};
+  return { x: COLS - 1 - x, y: ROWS - 1 - y };
+}
+
+/* ====== 后端可用性检查 ====== */
 async function checkAndSwitchBackend() {
     if (BACKEND_URL === FALLBACK_BACKEND_URL) {
         return; // 已经在使用备用URL，无需再检查
@@ -36,139 +68,182 @@ async function checkAndSwitchBackend() {
     }
 }
 
+/* ====== 初始化与重置 ====== */
 function getMode() {
     const select = document.getElementById('mode-select');
     return select ? select.value : 'human-vs-ai';
 }
 
+function getHumanSide() {
+    const select = document.getElementById('side-select');
+    return select ? select.value : 'red';
+}
+
 function setModeListener() {
     const select = document.getElementById('mode-select');
+    const sideSelection = document.getElementById('side-selection');
+    const sideSelect = document.getElementById('side-select');
+    
     if (select) {
         select.addEventListener('change', function() {
             mode = select.value;
+            // 只有人机对弈模式才显示选择执子方的选项
+            if (mode === 'human-vs-ai') {
+                sideSelection.style.display = 'inline-block';
+            } else {
+                sideSelection.style.display = 'none';
+            }
+            resetGame();
+        });
+    }
+    
+    if (sideSelect) {
+        sideSelect.addEventListener('change', function() {
+            humanSide = sideSelect.value;
             resetGame();
         });
     }
 }
 
 function resetGame() {
-    // 清空棋盘和状态，重新初始化
     const box = document.getElementById('chessboard');
-    // 保存坐标元素
+    // 保存坐标元素（保留棋盘格线与坐标显示）
     const coordinates = box.querySelectorAll('.coordinate');
     const coordinateHTML = Array.from(coordinates).map(coord => coord.outerHTML).join('');
     
-    box.innerHTML = '<div class="grid-lines">'+box.querySelector('.grid-lines').innerHTML+'</div>' + coordinateHTML;
+    box.innerHTML = '<div class="grid-lines">'+(box.querySelector('.grid-lines') ? box.querySelector('.grid-lines').innerHTML : '')+'</div>' + coordinateHTML;
     board = Array.from({length:ROWS},()=>Array(COLS).fill(null));
     currentSide = 'red';
     gameOver = false;
     isBoardFlipped = false;
+    selectedPiece = null;
+    validMoves = [];
+    lastMoveFrom = null;
+    movesHistory = [];
     hideStatus();
     initPieces();
+    
+    // 根据人类执子方决定是否翻转棋盘
+    if (humanSide === 'black' && !isBoardFlipped) {
+        flipBoard();
+    } else if (humanSide === 'red' && isBoardFlipped) {
+        flipBoard();
+    }
+    
     if (mode === 'ai-vs-ai') {
         setTimeout(aiMove, 500);
+    } else if (mode === 'human-vs-ai') {
+        // 如果AI先手（人类执黑），让AI先走
+        if (humanSide === 'black' && currentSide === 'red') {
+            setTimeout(aiMove, 500);
+        } else {
+            // 启用人类交互的监听
+            enableHumanMove();
+        }
+    } else {
+        // 启用人类交互的监听
+        enableHumanMove();
     }
 }
 
+/* ====== 初始化棋子（逻辑 -> 显示） ====== */
 function initPieces() {
     const box = document.getElementById('chessboard');
+    // 清除残留DOM（已在 resetGame 中执行）
+    // 放置棋子 DOM，并写入 board（逻辑坐标）
     ['red','black'].forEach(color=>{
       initialPieces[color].forEach(p=>{
         const el = document.createElement('div');
         el.className = `piece ${color}-piece`;
         el.textContent = p.n;
-        el.style.left = (25+p.x*50-20)+'px';
-        el.style.top  = (25+p.y*50-20)+'px';
+        // p.x, p.y 是逻辑坐标，显示位置按 toDisplayCoord 转换
+        const disp = toDisplayCoord(p.x, p.y);
+        el.style.left = (25 + disp.x * 50 - 20) + 'px';
+        el.style.top  = (25 + disp.y * 50 - 20) + 'px';
         box.appendChild(el);
-        board[p.y][p.x] = el;
+        board[p.y][p.x] = el; // 存储在逻辑坐标系
       });
     });
     enableHumanMove();
 }
 
-/* 初始排布 */
-const initialPieces = {
-  red: [
-    {n:'帥',x:4,y:0},{n:'仕',x:3,y:0},{n:'仕',x:5,y:0},
-    {n:'相',x:2,y:0},{n:'相',x:6,y:0},{n:'馬',x:1,y:0},{n:'馬',x:7,y:0},
-    {n:'車',x:0,y:0},{n:'車',x:8,y:0},{n:'炮',x:1,y:2},{n:'炮',x:7,y:2},
-    {n:'兵',x:0,y:3},{n:'兵',x:2,y:3},{n:'兵',x:4,y:3},{n:'兵',x:6,y:3},{n:'兵',x:8,y:3}
-  ],
-  black: [
-    {n:'將',x:4,y:9},{n:'士',x:3,y:9},{n:'士',x:5,y:9},
-    {n:'象',x:2,y:9},{n:'象',x:6,y:9},{n:'馬',x:1,y:9},{n:'馬',x:7,y:9},
-    {n:'車',x:0,y:9},{n:'車',x:8,y:9},{n:'炮',x:1,y:7},{n:'炮',x:7,y:7},
-    {n:'卒',x:0,y:6},{n:'卒',x:2,y:6},{n:'卒',x:4,y:6},{n:'卒',x:6,y:6},{n:'卒',x:8,y:6}
-  ]
-};
-
-// 翻转棋盘函数
+/* ====== 翻转棋盘（只影响显示） ====== */
 function flipBoard() {
     isBoardFlipped = !isBoardFlipped;
-    
-    // 创建一个新的临时棋盘数组
-    const newBoard = Array.from({length: ROWS}, () => Array(COLS).fill(null));
-    
-    // 更新所有棋子的位置和内部board数组
+    // 重新设置所有 piece 的显示位置（根据其逻辑坐标）
     for (let y = 0; y < ROWS; y++) {
         for (let x = 0; x < COLS; x++) {
             const piece = board[y][x];
             if (piece) {
-                // 计算翻转后的位置
-                const flippedX = COLS - 1 - x;
-                const flippedY = ROWS - 1 - y;
-                
-                // 更新棋子位置
-                piece.style.left = (25 + flippedX * 50 - 20) + 'px';
-                piece.style.top = (25 + flippedY * 50 - 20) + 'px';
-                
-                // 更新内部board数组
-                newBoard[flippedY][flippedX] = piece;
+                const disp = toDisplayCoord(x, y);
+                piece.style.left = (25 + disp.x * 50 - 20) + 'px';
+                piece.style.top = (25 + disp.y * 50 - 20) + 'px';
             }
         }
     }
-    
-    // 替换内部board数组
-    board = newBoard;
-    
     // 更新上一步提示点的位置（如果存在）
     const moveOrigin = document.querySelector('.move-origin');
     if (moveOrigin && lastMoveFrom) {
-        const flippedX = COLS - 1 - lastMoveFrom.x;
-        const flippedY = ROWS - 1 - lastMoveFrom.y;
-        moveOrigin.style.left = (25 + flippedX * 50 - 6) + 'px';
-        moveOrigin.style.top = (25 + flippedY * 50 - 6) + 'px';
+        const disp = toDisplayCoord(lastMoveFrom.x, lastMoveFrom.y);
+        moveOrigin.style.left = (25 + disp.x * 50 - 6) + 'px';
+        moveOrigin.style.top = (25 + disp.y * 50 - 6) + 'px';
+    }
+    // 清除并重新显示 valid-move-hint（避免坐标混乱）
+    clearHints();
+    // 如果之前有选中棋子，重新显示它的可走位
+    if (selectedPiece) {
+        const fromLogic = findPiecePosition(selectedPiece);
+        if (fromLogic) {
+            validMoves = getValidMoves(fromLogic.x, fromLogic.y);
+            showHints(validMoves);
+        }
     }
 }
 
-/* ========== 游戏流程和渲染 ========== */
-function initBoard(){
-    setModeListener();
-    resetGame();
-    const pauseBtn = document.getElementById('pause-btn');
-    pauseBtn.addEventListener('click', function() {
-        isPaused = !isPaused;
-        pauseBtn.textContent = isPaused ? '继续' : '暂停';
-        if (!isPaused && mode === 'ai-vs-ai') {
-            setTimeout(aiMove, 1000);
-        }
-    });
-    
-    // 添加翻转棋盘按钮事件监听器
-    const flipBtn = document.getElementById('flip-btn');
-    flipBtn.addEventListener('click', flipBoard);
+/* ========== DOM & 坐标辅助函数 ========== */
+// 把 piece DOM 在 board 中找到其逻辑坐标（扫描 board）
+function findPiecePosition(el) {
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      if (board[y][x] === el) return {x, y};
+    }
+  }
+  return null;
 }
 
-window.addEventListener('DOMContentLoaded', initBoard);
-
+// 保留旧的 xy(el) 接口（兼容），但改为返回逻辑坐标
 function xy(el){
+  const pos = findPiecePosition(el);
+  if (pos) return pos;
+  // 如果没在 board 中，尝试从样式计算（fallback，按显示坐标计算然后转换为逻辑）
   const b = document.getElementById('chessboard').getBoundingClientRect();
-  let x = Math.round((el.offsetLeft + 20 - 25) / 50);
-  let y = Math.round((el.offsetTop  + 20 - 25) / 50);
-  
-  return {x,y};
+  let dispX = Math.round((el.offsetLeft + 20 - 25) / 50);
+  let dispY = Math.round((el.offsetTop  + 20 - 25) / 50);
+  return toLogicCoord(dispX, dispY);
 }
 
+/* ====== 克隆 board 状态（逻辑坐标）供后端使用 ====== */
+function cloneBoardToState(boardDom) {
+  const state = [];
+  for (let y = 0; y < ROWS; y++) {
+    const row = [];
+    for (let x = 0; x < COLS; x++) {
+      const p = boardDom[y][x];
+      if (!p) {
+        row.push(null);
+      } else {
+        row.push({ 
+            type: p.textContent.trim(), 
+            side: p.classList.contains('red-piece') ? 'red' : 'black' 
+        });
+      }
+    }
+    state.push(row);
+  }
+  return state;
+}
+
+/* ====== 尝试移动（move 使用逻辑坐标） ====== */
 async function tryMove(move) {
     if (gameOver) return;
     if (isPaused) {
@@ -176,22 +251,26 @@ async function tryMove(move) {
         return;
     }
 
+    // 期望 move.from / move.to 都是逻辑坐标 {x,y}
     const fromX = move.from.x;
     const fromY = move.from.y;
     const toX = move.to.x;
     const toY = move.to.y;
 
-    // 只在棋谱录制模式下保存位置信息
+    // 防护
+    if (fromX < 0 || fromX >= COLS || fromY < 0 || fromY >= ROWS) return;
+    if (toX < 0 || toX >= COLS || toY < 0 || toY >= ROWS) return;
+
+    // 棋谱录制：保存当前逻辑棋盘和走法
     if (mode === 'record-mode') {
-        // 保存当前棋盘状态和移动信息
         const boardStateBeforeMove = cloneBoardToState(board);
         movesHistory.push({
             board: boardStateBeforeMove,
             side: currentSide,
-            move: move
+            move: { from: {x: fromX, y: fromY}, to: {x: toX, y: toY} }
         });
 
-        // 保存位置信息到后台数据库
+        // 保存到后端数据库（逻辑坐标）
         try {
             await fetch(`${BACKEND_URL}/save_position`, {
                 method: 'POST',
@@ -199,7 +278,7 @@ async function tryMove(move) {
                 body: JSON.stringify({ 
                     board: boardStateBeforeMove, 
                     side: currentSide, 
-                    move: move 
+                    move: { from: {x: fromX, y: fromY}, to: {x: toX, y: toY} } 
                 })
             });
         } catch (error) {
@@ -210,7 +289,13 @@ async function tryMove(move) {
     const pieceEl = board[fromY][fromX];
     if (!pieceEl) return;
 
+    // 检查目标是否己方棋子（不能吃自己）
     const target = board[toY][toX];
+    if (target && ((currentSide === 'red' && target.classList.contains('red-piece')) || (currentSide === 'black' && target.classList.contains('black-piece')))) {
+        return; // 非法吃子
+    }
+
+    // 触发吃子动画（先显示再移除）
     if (target) {
         target.classList.add('boom-effect');
         setTimeout(() => {
@@ -218,10 +303,13 @@ async function tryMove(move) {
         }, 400);
     }
 
-    pieceEl.style.left = (25 + toX * 50 - 20) + 'px';
-    pieceEl.style.top  = (25 + toY * 50 - 20) + 'px';
+    // 移动逻辑：更新 board（逻辑）并移动 DOM（显示位置）
     board[fromY][fromX] = null;
     board[toY][toX] = pieceEl;
+
+    const dispTo = toDisplayCoord(toX, toY);
+    pieceEl.style.left = (25 + dispTo.x * 50 - 20) + 'px';
+    pieceEl.style.top  = (25 + dispTo.y * 50 - 20) + 'px';
 
     pieceEl.classList.add('move-effect', 'flame-effect');
     setTimeout(() => {
@@ -234,20 +322,22 @@ async function tryMove(move) {
         lastFromDot.parentNode.removeChild(lastFromDot);
     }
 
-    // 添加新的起点提示
+    // 添加新的起点提示（显示位置基于逻辑坐标）
     const fromDot = document.createElement('div');
     fromDot.className = 'move-origin';
-    fromDot.style.left = (25 + fromX * 50 - 6) + 'px';
-    fromDot.style.top = (25 + fromY * 50 - 6) + 'px';
+    const dispFrom = toDisplayCoord(fromX, fromY);
+    fromDot.style.left = (25 + dispFrom.x * 50 - 6) + 'px';
+    fromDot.style.top = (25 + dispFrom.y * 50 - 6) + 'px';
     document.getElementById('chessboard').appendChild(fromDot);
-    lastMoveFrom = {x: fromX, y: fromY}; // 保存上一步位置
+    lastMoveFrom = {x: fromX, y: fromY}; // 保存逻辑坐标
 
     document.querySelectorAll('.piece').forEach(p => p.classList.remove('last-move'));
     pieceEl.classList.add('last-move');
 
+    // 切换行棋方
     currentSide = (currentSide === 'red') ? 'black' : 'red';
     
-    // 检查游戏是否结束
+    // 检查游戏是否结束：发送逻辑棋盘状态给后端
     const boardState = cloneBoardToState(board);
     let checkResponse;
     try {
@@ -273,25 +363,30 @@ async function tryMove(move) {
         // 游戏继续
         if (mode === 'ai-vs-ai') {
             setTimeout(aiMove, 1000);
-        } else if (mode === 'human-vs-ai' && currentSide === 'black') {
+        } else if (mode === 'human-vs-ai' && currentSide !== humanSide) {
+            // 当前轮到AI行棋时自动调用AI移动
             setTimeout(aiMove, 1000);
         } else if (mode === 'record-mode') {
             // 在棋谱录制模式下，启用双方手动操作
             enableHumanMove();  // 这会同时启用红方和黑方的操作
+        } else {
+            // 常规人机或人对人模式：重新启用点击绑定以便下一步交互
+            enableHumanMove();
         }
     }
     clearHints();
 }
 
+/* ====== AI 移动 ====== */
 async function aiMove() {
   if (gameOver) return;
   if (isPaused) {
-    showStatus('已暂停，点击“继续”可恢复');
+    showStatus('已暂停，点击"继续"可恢复');
     return;
   }
   showStatus(`${currentSide === 'red' ? '红方' : '黑方'} 正在思考...`);
 
-  const boardState = cloneBoardToState(board);
+  const boardState = cloneBoardToState(board); // 逻辑棋盘
   try {
     let response;
     try {
@@ -310,8 +405,8 @@ async function aiMove() {
         });
     }
     const move = await response.json();
-    console.log('AI 移动：', move);
-    // 如果move为null，表示AI认输
+    console.log('AI 移动（逻辑坐标）:', move);
+    // 如果 move 为 null，表示 AI 认输
     if (move === null) {
         gameOver = true;
         showStatus(`${currentSide === 'red' ? '红方' : '黑方'} 认输，游戏结束！`);
@@ -320,6 +415,7 @@ async function aiMove() {
 
     if (move.from && move.to) {
         hideStatus();
+        // move.from/to 已经是逻辑坐标，直接传入 tryMove
         tryMove(move);
     }
   } catch (error) {
@@ -327,6 +423,7 @@ async function aiMove() {
   }
 }
 
+/* ====== 状态显示 ====== */
 function showStatus(message) {
   const statusDiv = document.getElementById('game-status');
   statusDiv.textContent = message;
@@ -338,76 +435,37 @@ function hideStatus() {
   statusDiv.style.display = 'none';
 }
 
-
-function cloneBoardToState(boardDom) {
-  const state = [];
-  for (let y = 0; y < ROWS; y++) {
-    const row = [];
-    for (let x = 0; x < COLS; x++) {
-      const p = boardDom[y][x];
-      if (!p) {
-        row.push(null);
-      } else {
-        row.push({ 
-            type: p.textContent.trim(), 
-            side: p.classList.contains('red-piece') ? 'red' : 'black' 
-        });
-      }
-    }
-    state.push(row);
-  }
-  return state;
-}
-
-function enableHumanMove() {
-    // 在棋谱录制模式下，启用双方手动操作
-    if (mode === 'record-mode') {
-        document.querySelectorAll('.piece').forEach(el => {
-            el.onclick = function(e) {
-                if (gameOver || isPaused) return;
-                clearHints();
-                selectedPiece = el;
-                const pos = xy(el);
-                                
-                // 根据当前行棋方启用相应的移动规则
-                if (currentSide === 'red' && el.classList.contains('red-piece')) {
-                    validMoves = getValidMoves(pos.x, pos.y);
-                    showHints(validMoves);
-                } else if (currentSide === 'black' && el.classList.contains('black-piece')) {                
-                    validMoves = getValidMoves(pos.x, pos.y);                    
-                    showHints(validMoves);
-                }
-            };
-        });
-    } else {
-        // 原有的人机对弈模式逻辑
-        document.querySelectorAll('.piece.red-piece').forEach(el => {
-            el.onclick = function(e) {
-                if (gameOver || isPaused || mode !== 'human-vs-ai' || currentSide !== 'red') return;
-                clearHints();
-                selectedPiece = el;
-                const pos = xy(el);
-                validMoves = getValidMoves(pos.x, pos.y);
-                showHints(validMoves);
-            };
-        });
-    }
-}
-
-// 为黑方添加手动操作功能
-function enableBlackHumanMove() {
-    document.querySelectorAll('.piece.black-piece').forEach(el => {
-        el.onclick = function(e) {
-            if (gameOver || isPaused || mode !== 'record-mode' || currentSide !== 'black') return;
+/* ====== 显示可走提示 & 清理 ====== */
+// moves 是逻辑坐标数组 [{x,y}, ...]
+function showHints(moves) {
+    const box = document.getElementById('chessboard');
+    moves.forEach(m => {
+        const hint = document.createElement('div');
+        hint.className = 'valid-move-hint';
+        const disp = toDisplayCoord(m.x, m.y);
+        hint.style.left = (25 + disp.x * 50) + 'px';
+        hint.style.top = (25 + disp.y * 50) + 'px';
+        hint.onclick = function() {
             clearHints();
-            selectedPiece = el;
-            const pos = xy(el);
-            validMoves = getValidMoves(pos.x, pos.y);
-            showHints(validMoves);
+            if (selectedPiece) {
+                const from = findPiecePosition(selectedPiece); // 逻辑坐标
+                if (from) {
+                    tryMove({from: {x: from.x, y: from.y}, to: {x: m.x, y: m.y}});
+                }
+                selectedPiece = null;
+                validMoves = [];
+            }
         };
+        box.appendChild(hint);
     });
 }
 
+function clearHints() {
+    document.querySelectorAll('.valid-move-hint').forEach(h => h.remove());
+}
+
+/* ====== 走法计算（逻辑坐标） ====== */
+// getValidMoves 使用逻辑坐标，不依赖显示翻转
 function getValidMoves(x, y) {
     const moves = [];
     // 获取当前棋子的颜色
@@ -427,36 +485,13 @@ function getValidMoves(x, y) {
     return moves;
 }
 
-function showHints(moves) {
-    const box = document.getElementById('chessboard');
-    moves.forEach(m => {
-        const hint = document.createElement('div');
-        hint.className = 'valid-move-hint';
-        hint.style.left = (25 + m.x * 50) + 'px';
-        hint.style.top = (25 + m.y * 50) + 'px';
-        hint.onclick = function() {
-            clearHints();
-            if (selectedPiece) {
-                const from = xy(selectedPiece);
-                tryMove({from: {x: from.x, y: from.y}, to: {x: m.x, y: m.y}});
-                selectedPiece = null;
-                validMoves = [];
-            }
-        };
-        box.appendChild(hint);
-    });
-}
-
-function clearHints() {
-    document.querySelectorAll('.valid-move-hint').forEach(h => h.remove());
-}
-
-// 修复棋盘翻转后的走法规则
+// canMoveOn 使用逻辑坐标进行所有判断（不再和 isBoardFlipped 纠结）
 function canMoveOn(fx, fy, tx, ty, side) {
     const piece = board[fy][fx];
-    if (!piece || (side === 'red' && !piece.classList.contains('red-piece')) || (side === 'black' && !piece.classList.contains('black-piece'))) return false;
+    if (!piece) return false;
+    if ((side === 'red' && !piece.classList.contains('red-piece')) || (side === 'black' && !piece.classList.contains('black-piece'))) return false;
     const target = board[ty][tx];
-    // 修正吃子判断逻辑，正确识别己方棋子
+    // 不能吃己方
     if (target && ((side === 'red' && target.classList.contains('red-piece')) || (side === 'black' && target.classList.contains('black-piece')))) return false;
     const name = piece.textContent.trim();
     // 不能原地不动
@@ -464,84 +499,54 @@ function canMoveOn(fx, fy, tx, ty, side) {
     // 不能越界
     if (tx < 0 || tx >= COLS || ty < 0 || ty >= ROWS) return false;
     
-    // 考虑棋盘翻转的情况
-    let actualFX = isBoardFlipped ? COLS - 1 - fx : fx;
-    let actualFY = isBoardFlipped ? ROWS - 1 - fy : fy;
-    let actualTX = isBoardFlipped ? COLS - 1 - tx : tx;
-    let actualTY = isBoardFlipped ? ROWS - 1 - ty : ty;
-    
-    // 【修复】: 不再翻转 side。我们使用原始的 side 和 原始的(actual)坐标系进行判断。
-    // let actualSide = side; // <- 这一整块逻辑都删掉
-    // if (isBoardFlipped) {
-    //     actualSide = side === 'red' ? 'black' : 'red';
-    // }
-    
-    // 走法规则
+    // 走法规则（逻辑坐标）
     if (name === '兵' || name === '卒') {
-        // 兵/卒
-        let forward = side === 'red' ? 1 : -1; // <-- 【修复】使用 side
-        let isAcrossRiver = (side === 'red' && actualFY >= 5) || (side === 'black' && actualFY <= 4); // <-- 【修复】使用 side
-        if (actualTX === actualFX && actualTY === actualFY + forward) return true;
-        if (isAcrossRiver && Math.abs(actualTX - actualFX) === 1 && actualTY === actualFY) return true;
+        // 兵/卒：红往下（y+1），黑往上（y-1）
+        let forward = side === 'red' ? 1 : -1;
+        let isAcrossRiver = (side === 'red' && fy >= 5) || (side === 'black' && fy <= 4);
+        if (tx === fx && ty === fy + forward) return true;
+        if (isAcrossRiver && Math.abs(tx - fx) === 1 && ty === fy) return true;
         return false;
     } else if (name === '車' || name === '车') {
-        // 车
-        if (actualFX === actualTX) {
-            let minY = Math.min(actualFY, actualTY), maxY = Math.max(actualFY, actualTY);
+        // 车：直线且无阻挡
+        if (fx === tx) {
+            let minY = Math.min(fy, ty), maxY = Math.max(fy, ty);
             for (let i = minY + 1; i < maxY; i++) {
-                // 需要将检查坐标转换回原始坐标系
-                const checkY = isBoardFlipped ? ROWS - 1 - i : i;
-                const checkX = isBoardFlipped ? COLS - 1 - actualFX : actualFX;
-                if (board[checkY][checkX]) return false;
+                if (board[i][fx]) return false;
             }
             return true;
-        } else if (actualFY === actualTY) {
-            let minX = Math.min(actualFX, actualTX), maxX = Math.max(actualFX, actualTX);
+        } else if (fy === ty) {
+            let minX = Math.min(fx, tx), maxX = Math.max(fx, tx);
             for (let i = minX + 1; i < maxX; i++) {
-                // 需要将检查坐标转换回原始坐标系
-                const checkY = isBoardFlipped ? ROWS - 1 - actualFY : actualFY;
-                const checkX = isBoardFlipped ? COLS - 1 - i : i;
-                if (board[checkY][checkX]) return false;
+                if (board[fy][i]) return false;
             }
             return true;
         }
         return false;
     } else if (name === '馬' || name === '马') {
-        // 马
-        let dx = Math.abs(actualTX - actualFX), dy = Math.abs(actualTY - actualFY);
+        // 马：走日，需腿不堵
+        let dx = Math.abs(tx - fx), dy = Math.abs(ty - fy);
         if (!((dx === 1 && dy === 2) || (dx === 2 && dy === 1))) return false;
         if (dx === 1) {
-            let blockY = actualFY + (actualTY > actualFY ? 1 : -1);
-            // 需要将检查坐标转换回原始坐标系
-            const checkY = isBoardFlipped ? ROWS - 1 - blockY : blockY;
-            const checkX = isBoardFlipped ? COLS - 1 - actualFX : actualFX;
-            if (board[checkY][checkX]) return false;
+            let blockY = fy + (ty > fy ? 1 : -1);
+            if (board[blockY][fx]) return false;
         } else {
-            let blockX = actualFX + (actualTX > actualFX ? 1 : -1);
-            // 需要将检查坐标转换回原始坐标系
-            const checkY = isBoardFlipped ? ROWS - 1 - actualFY : actualFY;
-            const checkX = isBoardFlipped ? COLS - 1 - blockX : blockX;
-            if (board[checkY][checkX]) return false;
+            let blockX = fx + (tx > fx ? 1 : -1);
+            if (board[fy][blockX]) return false;
         }
         return true;
     } else if (name === '炮') {
-        // 炮
+        // 炮：直线，若不吃子则中间无子；若吃子则中间恰有一个子
         let count = 0;
-        if (actualFX === actualTX) {
-            let minY = Math.min(actualFY, actualTY), maxY = Math.max(actualFY, actualTY);
+        if (fx === tx) {
+            let minY = Math.min(fy, ty), maxY = Math.max(fy, ty);
             for (let i = minY + 1; i < maxY; i++) {
-                // 需要将检查坐标转换回原始坐标系
-                const checkY = isBoardFlipped ? ROWS - 1 - i : i;
-                const checkX = isBoardFlipped ? COLS - 1 - actualFX : actualFX;
-                if (board[checkY][checkX]) count++;
+                if (board[i][fx]) count++;
             }
-        } else if (actualFY === actualTY) {
-            let minX = Math.min(actualFX, actualTX), maxX = Math.max(actualFX, actualTX);
+        } else if (fy === ty) {
+            let minX = Math.min(fx, tx), maxX = Math.max(fx, tx);
             for (let i = minX + 1; i < maxX; i++) {
-                // 需要将检查坐标转换回原始坐标系
-                const checkY = isBoardFlipped ? ROWS - 1 - actualFY : actualFY;
-                const checkX = isBoardFlipped ? COLS - 1 - i : i;
-                if (board[checkY][checkX]) count++;
+                if (board[fy][i]) count++;
             }
         } else {
             return false;
@@ -552,33 +557,142 @@ function canMoveOn(fx, fy, tx, ty, side) {
             return count === 0;
         }
     } else if (name === '帥' || name === '將') {
-        // 帅/将
-        let dx = Math.abs(actualTX - actualFX), dy = Math.abs(actualTY - actualFY);
+        // 帅/将：一格且在九宫内
+        let dx = Math.abs(tx - fx), dy = Math.abs(ty - fy);
         if (dx + dy !== 1) return false;
-        if (actualTX < 3 || actualTX > 5) return false;
-        if (side === 'red' && (actualTY < 0 || actualTY > 2)) return false; // <-- 【修复】使用 side
-        if (side === 'black' && (actualTY < 7 || actualTY > 9)) return false; // <-- 【修复】使用 side
+        if (tx < 3 || tx > 5) return false;
+        if (side === 'red' && (ty < 0 || ty > 2)) return false;
+        if (side === 'black' && (ty < 7 || ty > 9)) return false;
         return true;
     } else if (name === '士' || name === '仕') {
-        // 士/仕
-        let dx = Math.abs(actualTX - actualFX), dy = Math.abs(actualTY - actualFY);
+        // 士/仕：斜走一格且在九宫内
+        let dx = Math.abs(tx - fx), dy = Math.abs(ty - fy);
         if (dx !== 1 || dy !== 1) return false;
-        if (actualTX < 3 || actualTX > 5) return false;
-        if (side === 'red' && (actualTY < 0 || actualTY > 2)) return false; // <-- 【修复】使用 side
-        if (side === 'black' && (actualTY < 7 || actualTY > 9)) return false; // <-- 【修复】使用 side
+        if (tx < 3 || tx > 5) return false;
+        if (side === 'red' && (ty < 0 || ty > 2)) return false;
+        if (side === 'black' && (ty < 7 || ty > 9)) return false;
         return true;
     } else if (name === '相' || name === '象') {
-        // 相/象
-        let dx = Math.abs(actualTX - actualFX), dy = Math.abs(actualTY - actualFY);
+        // 相/象：田字走法（2,2），不过河限制，且不能被蹩（中点不能有子）
+        let dx = Math.abs(tx - fx), dy = Math.abs(ty - fy);
         if (dx !== 2 || dy !== 2) return false;
-        if (side === 'red' && actualTY > 4) return false; // <-- 【修复】使用 side
-        if (side === 'black' && actualTY < 5) return false; // <-- 【修复】使用 side
-        let blockX = (actualFX + actualTX) / 2, blockY = (actualFY + actualTY) / 2;
-        // 需要将检查坐标转换回原始坐标系
-        const checkY = isBoardFlipped ? ROWS - 1 - blockY : blockY;
-        const checkX = isBoardFlipped ? COLS - 1 - blockX : blockX;
-        if (board[checkY][checkX]) return false;
+        if (side === 'red' && ty > 4) return false;
+        if (side === 'black' && ty < 5) return false;
+        let blockX = (fx + tx) / 2, blockY = (fy + ty) / 2;
+        if (board[blockY][blockX]) return false;
         return true;
     }
     return false;
+}
+
+/* ====== 启用人类操作（点击事件绑定） ====== */
+function enableHumanMove() {
+    // 先解绑所有 piece 的 onclick（防止重复绑定）
+    document.querySelectorAll('.piece').forEach(el => el.onclick = null);
+
+    if (mode === 'record-mode') {
+        // 棋谱录制：双方都可以点击
+        document.querySelectorAll('.piece').forEach(el => {
+            el.onclick = function(e) {
+                if (gameOver || isPaused) return;
+                clearHints();
+                selectedPiece = el;
+                const pos = findPiecePosition(el);
+                if (!pos) return;
+                // 只显示与当前行棋方一致的选中
+                if ((currentSide === 'red' && el.classList.contains('red-piece')) || (currentSide === 'black' && el.classList.contains('black-piece'))) {
+                    validMoves = getValidMoves(pos.x, pos.y);
+                    showHints(validMoves);
+                }
+            };
+        });
+    } else if (mode === 'human-vs-ai') {
+        // 人机对弈：根据人类执子方绑定相应颜色的棋子
+        const humanPieces = document.querySelectorAll(`.piece.${humanSide}-piece`);
+        humanPieces.forEach(el => {
+            el.onclick = function(e) {
+                if (gameOver || isPaused || mode !== 'human-vs-ai' || currentSide !== humanSide) return;
+                clearHints();
+                selectedPiece = el;
+                const pos = findPiecePosition(el);
+                if (!pos) return;
+                validMoves = getValidMoves(pos.x, pos.y);
+                showHints(validMoves);
+            };
+        });
+    } else {
+        // 默认人机模式：只有红方可点击（当前实现是人先红）
+        document.querySelectorAll('.piece.red-piece').forEach(el => {
+            el.onclick = function(e) {
+                if (gameOver || isPaused || mode !== 'human-vs-ai' || currentSide !== 'red') return;
+                clearHints();
+                selectedPiece = el;
+                const pos = findPiecePosition(el);
+                if (!pos) return;
+                validMoves = getValidMoves(pos.x, pos.y);
+                showHints(validMoves);
+            };
+        });
+    }
+
+    // 如果是 record-mode 并且黑方需要手动走子，也要单独绑定黑子点击（可选）
+    if (mode === 'record-mode') {
+        enableBlackHumanMove();
+    }
+}
+
+function enableBlackHumanMove() {
+    // 解绑再绑定，避免重复
+    document.querySelectorAll('.piece.black-piece').forEach(el => el.onclick = null);
+    document.querySelectorAll('.piece.black-piece').forEach(el => {
+        el.onclick = function(e) {
+            if (gameOver || isPaused || mode !== 'record-mode' || currentSide !== 'black') return;
+            clearHints();
+            selectedPiece = el;
+            const pos = findPiecePosition(el);
+            if (!pos) return;
+            validMoves = getValidMoves(pos.x, pos.y);
+            showHints(validMoves);
+        };
+    });
+}
+
+/* ====== 页面初始化 ====== */
+function initBoard(){
+    setModeListener();
+    resetGame();
+    const pauseBtn = document.getElementById('pause-btn');
+    if (pauseBtn) {
+        pauseBtn.addEventListener('click', function() {
+            isPaused = !isPaused;
+            pauseBtn.textContent = isPaused ? '继续' : '暂停';
+            if (!isPaused && mode === 'ai-vs-ai') {
+                setTimeout(aiMove, 1000);
+            }
+        });
+    }
+    
+    // 添加翻转棋盘按钮事件监听器
+    const flipBtn = document.getElementById('flip-btn');
+    if (flipBtn) flipBtn.addEventListener('click', flipBoard);
+    
+    // 初始化时根据模式设置执子方选择框的显示状态
+    const modeSelect = document.getElementById('mode-select');
+    const sideSelection = document.getElementById('side-selection');
+    if (modeSelect && sideSelection) {
+        if (modeSelect.value === 'human-vs-ai') {
+            sideSelection.style.display = 'inline-block';
+        } else {
+            sideSelection.style.display = 'none';
+        }
+    }
+}
+
+window.addEventListener('DOMContentLoaded', initBoard);
+
+/* ====== 其它工具函数（可按需扩展） ====== */
+// 例如：导出棋谱、加载棋谱等，这里保留占位
+function exportMoves() {
+  // 返回 movesHistory 等
+  return movesHistory;
 }

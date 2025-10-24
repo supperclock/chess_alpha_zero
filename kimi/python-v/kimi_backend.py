@@ -6,9 +6,118 @@ from util import log
 from ai_bridge import find_best_move_c
 from ai_bridge2 import find_best_move_c2
 # from ai_gpt_bridge import find_best_move_c
+from pikafish_wrapper import PikafishEngine
 
+with PikafishEngine("pikafish.exe") as engine:
+    # 1. 初始化 UCI
+    print("Initializing UCI...")
+    uci_resp = engine.uci()
+    for line in uci_resp:
+        print(line)
+    
 app = Flask(__name__)
 CORS(app)
+
+# 定义中国象棋棋子到FEN字符的映射
+# (根据您数据中的中文和side)
+XIANGQI_PIECE_MAP = {
+    'red': {
+        '帥': 'K', # 帅 (King)
+        '仕': 'A', # 仕 (Advisor)
+        '相': 'B', # 相 (Elephant/Bishop)
+        '馬': 'N', # 马 (Horse/Knight)
+        '車': 'R', # 车 (Rook/Chariot)
+        '炮': 'C', # 炮 (Cannon)
+        '兵': 'P', # 兵 (Pawn)
+    },
+    'black': {
+        '將': 'k', # 将 (General)
+        '士': 'a', # 士 (Advisor)
+        '象': 'b', # 象 (Elephant)
+        '馬': 'n', # 马 (Horse)
+        '車': 'r', # 车 (Rook)
+        '炮': 'c', # 炮 (Cannon)
+        '卒': 'p', # 卒 (Pawn)
+    }
+}
+
+def convert_to_fen(board_data: list, side_to_move: str) -> str:
+    """
+    将前端的棋盘数据结构转换为中国象棋的FEN字符串。
+
+    :param board_data: 10x9 的列表，[0] 为红方底线, [9] 为黑方底线。
+    :param side_to_move: 'red' 或 'black'。
+    :return: FEN 字符串。
+    """
+    
+    fen_rows = []
+    
+    # FEN 从棋盘顶部 (黑方) 开始，所以我们倒序遍历 board_data
+    # reversed(board_data) 会从 index 9 遍历到 index 0
+    for row in reversed(board_data):
+        fen_row_str = ""
+        empty_squares = 0
+        
+        # 遍历行中的每一格 (9列)
+        for cell in row:
+            if cell is None:
+                empty_squares += 1
+            else:
+                # 如果有连续的空格，先添加数字
+                if empty_squares > 0:
+                    fen_row_str += str(empty_squares)
+                    empty_squares = 0
+                
+                # 添加棋子字符
+                try:
+                    piece_side = cell['side']
+                    piece_type = cell['type']
+                    fen_char = XIANGQI_PIECE_MAP[piece_side][piece_type]
+                    fen_row_str += fen_char
+                except KeyError:
+                    raise ValueError(f"未知的棋子类型或阵营: {cell}")
+
+        # 处理行尾的连续空格
+        if empty_squares > 0:
+            fen_row_str += str(empty_squares)
+            
+        fen_rows.append(fen_row_str)
+
+    # 1. 棋盘部分：用 '/' 连接每一行
+    board_fen = "/".join(fen_rows)
+
+    # 2. 走棋方： 'red' -> 'w', 'black' -> 'b'
+    side_fen = 'w' if side_to_move == 'red' else 'b'
+    
+    # 3. 其他FEN部分 (吃过路兵、回合数等)
+    # 对于中国象棋，通常用 "- - 0 1" 作为默认值
+    remaining_fen = "- - 0 1"
+
+    return f"{board_fen} {side_fen} {remaining_fen}"
+
+def ucci_move_to_coord(ucci_move: str) -> dict:
+    """
+    将 UCCI 着法（如 'h2e2'）转换为坐标。
+    假设棋盘：x=0~8 (a~i), y=0~9 (0~9)
+    """
+    if len(ucci_move) < 4:
+        raise ValueError(f"无效 UCCI 着法: {ucci_move}")
+    
+    from_sq = ucci_move[0:2]  # e.g., "h2"
+    to_sq = ucci_move[2:4]    # e.g., "e2"
+
+    def sq_to_coord(sq):
+        file, rank = sq[0], sq[1]
+        if file not in 'abcdefghi' or rank not in '0123456789':
+            raise ValueError(f"无效中国象棋格: {sq}")
+        x = ord(file) - ord('a')  # a=0, ..., i=8
+        y = int(rank)             # 0~9 直接对应 y
+        return {'x': x, 'y': y}
+
+    return {
+        'from': sq_to_coord(from_sq),
+        'to': sq_to_coord(to_sq)
+    }
 
 @app.route('/ai_move', methods=['POST'])
 def ai_move():    
@@ -25,15 +134,36 @@ def ai_move():
         
     board_state = data['board']
     side_to_move = data['side']
+
+    # log(f"[LOG] /ai_move {request.method} data={request.json}")
+    fen = convert_to_fen(board_state, side_to_move)
+    # is_flipped = is_fen_flipped(fen)
+    # if is_flipped:  # 翻转棋盘
+    #     fen = flip_xiangqi_fen(fen)
+    # log(f"[LOG] FEN: {fen}")
+    move = engine.get_bestmove(
+        fen=fen,
+        movetime=1500
+    )
+    log(f"[LOG] Best move: {move}")
+    best_move = ucci_move_to_coord(move)
+    # if is_flipped:  # 翻转回正
+    #     #坐标左右、上下翻转
+    #     best_move = {
+    #         'from': {'x': 8 - best_move['from']['x'], 'y': 9 - best_move['from']['y']},
+    #         'to': {'x': 8 - best_move['to']['x'], 'y': 9 - best_move['to']['y']}
+    #     }
+    log(f"[LOG] Best move: {best_move}")
+  
+
+    # if side_to_move == 'red':
+    #     # best_move = minimax_root(board_state, side_to_move)
+    #     best_move = find_best_move_c2(board_state, side_to_move)
+    # else:
+    #     best_move = find_best_move_c(board_state, side_to_move)
     
-    if side_to_move == 'red':
-        # best_move = minimax_root(board_state, side_to_move)
-        best_move = find_best_move_c2(board_state, side_to_move)
-    else:
-        best_move = find_best_move_c(board_state, side_to_move)
-    
-    # best_move = nn_interface(board_state, side_to_move)
-    log(f"Best move: {best_move}")
+    # # best_move = nn_interface(board_state, side_to_move)
+    # log(f"Best move: {best_move}")
     return jsonify(best_move)    
     
 
@@ -62,7 +192,7 @@ def nn_interface(board_state, side):
     if not sorted_policy: # 确保列表非空
         return None 
     for move, prob in sorted_policy[:5]: # 打印前5个最可能的走法
-        print(f"  - 走法: {move.to_dict()}, 概率: {prob:.4f}")
+        log(f"  - 走法: {move.to_dict()}, 概率: {prob:.4f}")
     log(sorted_policy[0][0].to_dict())
     return sorted_policy[0][0].to_dict()
 @app.route('/check_game_over', methods=['POST'])
@@ -154,6 +284,7 @@ def static_files(filename):
         return send_from_directory('.', filename)
     else:
         return "File not found", 404
+
 
 if __name__ == '__main__':
     log("[后端] 启动Flask服务器...")

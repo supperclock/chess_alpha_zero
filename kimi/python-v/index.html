@@ -29,25 +29,7 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-        }
-
-        #commentary-panel {
-            width: 640px;
-            height: 640px;
-            background: rgba(255,255,255,0.7);
-            border-radius: 12px;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.08);
-            padding: 0;
-            font-size: 12px;
-            color: #333;
-            line-height: 1.7;
-            margin-top: 0px;
-            white-space: pre-line;
-            overflow-y: hidden;
-            box-sizing: border-box;
-            display: flex;
-            flex-direction: column;
-        }
+        }      
 
         .response-section {
             flex: 1;
@@ -330,9 +312,9 @@
             font-size: 18px;
             font-weight: bold;
             color: #d2691e;
-            margin-bottom: 0px;
-            height: 2px;
             display: none;
+            margin-top: 30px;
+            min-height: 1.2em;
         }
 
         .control-btn {
@@ -345,7 +327,8 @@
             cursor: pointer;
             box-shadow: 0 2px 8px rgba(0,0,0,0.08);
             transition: background 0.2s, color 0.2s;
-            margin-top: 20px;
+            /* 保持类中的左右间距，移除内联的上下间距 */
+            margin-top: 0; 
             display: inline-block;
             margin-left: 10px;
             margin-right: 10px;
@@ -361,18 +344,20 @@
         <div class="chess-panel">
             <div style="width:100%;text-align:center;margin-bottom:16px;">
                 <label for="mode-select" style="font-size:16px;color:#8b4513;font-weight:bold;">对弈模式：</label>
-                <select id="mode-select" style="font-size:16px;padding:4px 12px;">
+                <select id="mode-select" style="font-size:16px;padding:4px 12px;vertical-align: middle;">
                     <option value="human-vs-ai">人机对弈</option>
                     <option value="ai-vs-ai">AI对弈</option>
-                    <option value="record-mode">棋谱录制</option>
+                    <option value="record-mode">自定义局</option>
                 </select>
-                <!-- 添加选择执子方的选项 -->
-                <div id="side-selection" style="display: none; margin-top: 10px; margin-left: 10px; display: inline-block;">
+                <div id="side-selection" style="display: none; margin-left: 10px; display: inline-block; vertical-align: middle;">
                     <label for="side-select" style="font-size:16px;color:#8b4513;font-weight:bold;">选择执子方：</label>
-                    <select id="side-select" style="font-size:16px;padding:4px 12px;">
+                    <select id="side-select" style="font-size:16px;padding:4px 12px;vertical-align: middle;">
                         <option value="red">红方</option>
                         <option value="black">黑方</option>
                     </select>
+                </div>
+                <div id="pause-container" style="display: none; vertical-align: middle;">
+                    <button id="pause-btn" class="control-btn">暂停</button>
                 </div>
             </div>
             <div class="chess-container">             
@@ -419,7 +404,6 @@
                         <span>楚河</span>
                         <span>汉界</span>
                     </div>
-                    <!-- X轴坐标 (0-8) -->
                     <div class="coordinate coordinate-x" style="left: 25px;">0</div>
                     <div class="coordinate coordinate-x" style="left: 75px;">1</div>
                     <div class="coordinate coordinate-x" style="left: 125px;">2</div>
@@ -430,7 +414,6 @@
                     <div class="coordinate coordinate-x" style="left: 375px;">7</div>
                     <div class="coordinate coordinate-x" style="left: 425px;">8</div>
                     
-                    <!-- Y轴坐标 (0-9) -->
                     <div class="coordinate coordinate-y" style="top: 25px;">0</div>
                     <div class="coordinate coordinate-y" style="top: 75px;">1</div>
                     <div class="coordinate coordinate-y" style="top: 125px;">2</div>
@@ -441,10 +424,6 @@
                     <div class="coordinate coordinate-y" style="top: 375px;">7</div>
                     <div class="coordinate coordinate-y" style="top: 425px;">8</div>
                     <div class="coordinate coordinate-y" style="top: 475px;">9</div>
-                </div>
-                <div style="text-align: center;">
-                    <button id="pause-btn" class="control-btn">暂停</button>
-                    <button id="flip-btn" class="control-btn">翻转棋盘</button>
                 </div>
                 <div id="game-status" class="game-status"></div>
             </div>

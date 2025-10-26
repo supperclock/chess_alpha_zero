@@ -1,7 +1,7 @@
 /* ========== 基础数据 ========== */
 const ROWS = 10, COLS = 9;
-const PRIMARY_BACKEND_URL = 'http://localhost:5000'; // 主后端服务器URL
-const FALLBACK_BACKEND_URL = 'http://localhost:5000'; // 备用后端服务器URL
+const PRIMARY_BACKEND_URL = 'http://127.0.0.1:5000'; // 主后端服务器URL
+const FALLBACK_BACKEND_URL = 'http://127.0.0.1:5000'; // 备用后端服务器URL
 let BACKEND_URL = PRIMARY_BACKEND_URL; // 当前使用的后端URL
 
 // board 始终表示"逻辑坐标系"的棋盘：board[logicY][logicX] = piece DOM 或 null
@@ -68,6 +68,130 @@ async function checkAndSwitchBackend() {
     }
 }
 
+/* ====== FEN 解析函数 ====== */
+/**
+ * 解析 FEN 字符串并初始化棋盘状态。
+ * @param {string} fenString 格式如: rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1
+ */
+function parseFEN(fenString) {
+    // 1. 清空当前棋盘 DOM 和逻辑 board
+    const box = document.getElementById('chessboard');
+    box.querySelectorAll('.piece').forEach(p => p.remove()); // 移除所有棋子DOM
+    board = Array.from({length:ROWS},()=>Array(COLS).fill(null));
+
+    // 2. 解析 FEN
+    const parts = fenString.split(' ');
+    const boardPart = parts[0]; // 棋子位置
+    const sidePart = parts[1];  // 当前行棋方
+
+    if (sidePart === 'w') { // FEN 中 'w' 是白方 (红方), 'b' 是黑方 (黑方)
+        currentSide = 'red';
+    } else if (sidePart === 'b') {
+        currentSide = 'black';
+    } else {
+        // 默认红方
+        currentSide = 'red';
+    }
+
+    // FEN 符号到棋子名称和颜色的映射
+    const pieceMap = {
+        'k': { n: '將', side: 'black' }, 'a': { n: '士', side: 'black' }, 'b': { n: '象', side: 'black' },
+        'n': { n: '馬', side: 'black' }, 'r': { n: '車', side: 'black' }, 'c': { n: '炮', side: 'black' },
+        'p': { n: '卒', side: 'black' },
+        'K': { n: '帥', side: 'red' }, 'A': { n: '仕', side: 'red' }, 'B': { n: '相', side: 'red' },
+        'N': { n: '馬', side: 'red' }, 'R': { n: '車', side: 'red' }, 'C': { n: '炮', side: 'red' },
+        'P': { n: '兵', side: 'red' }
+    };
+    console.log('pieceMap:', pieceMap);
+    
+    // 遍历 FEN 字符串部分
+    let logicY = 0; // 逻辑坐标 y (0-9)
+    let logicX = 0; // 逻辑坐标 x (0-8)
+
+    for (const char of boardPart) {
+        if (char === '/') {
+            // 换行
+            logicY++;
+            logicX = 0;
+            if (logicY >= ROWS) break;
+        } else if (char >= '1' && char <= '9') {
+            // 空格
+            const emptyCount = parseInt(char);
+            logicX += emptyCount;
+        } else if (pieceMap[char]) {
+            // 棋子
+            const pieceInfo = pieceMap[char];
+            const colorClass = pieceInfo.side === 'red' ? 'red-piece' : 'black-piece';
+
+            const el = document.createElement('div');
+            el.className = `piece ${colorClass}`;
+            el.textContent = pieceInfo.n;
+            
+            // 棋盘 DOM 位置
+            const disp = toDisplayCoord(logicX, logicY);
+            el.style.left = (25 + disp.x * 50 - 20) + 'px';
+            el.style.top  = (25 + disp.y * 50 - 20) + 'px';
+            box.appendChild(el);
+            
+            // 逻辑 board 存储
+            board[logicY][logicX] = el;
+            
+            logicX++;
+        }
+    }
+    
+    // 确保其他游戏状态重置
+    gameOver = false;
+    isBoardFlipped = false; // FEN 初始化后，默认不翻转，除非后续手动翻转
+    selectedPiece = null;
+    validMoves = [];
+    lastMoveFrom = null;
+    movesHistory = [];
+    hideStatus();
+}
+
+/* ====== FEN 输入并初始化 ====== */
+async function promptForFENAndInit() {
+    const defaultFEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'; // 默认初始布局
+    
+    let fen = null;
+    let valid = false;
+    
+    while (!valid) {
+        // 弹出对话框要求用户输入 FEN
+        fen = prompt("请输入棋局 FEN 字符串进行自定义初始化：", defaultFEN);
+        console.log('用户输入的 FEN:', fen);
+        
+        if (fen === null) {
+            // 用户点击取消，切换回人机对弈模式
+            const modeSelect = document.getElementById('mode-select');
+            modeSelect.value = 'human-vs-ai';
+            mode = 'human-vs-ai';
+            // 重新调用监听器以更新UI和重置游戏（会再次调用 resetGame）
+            // 注意：这里需要递归调用 setModeListener 的逻辑，但为避免无限循环，我们直接调用 resetGame
+            setModeListener(); // 确保 UI 更新
+            resetGame(); 
+            return;
+        }
+        
+        // 简单校验 FEN 格式（至少需要棋子部分和行棋方部分）
+        const parts = fen.split(' ');
+        if (parts.length >= 2 && parts[1].match(/^[wb]$/i)) {
+            valid = true;
+        } else {
+            alert("FEN 格式不正确，请重新输入。\n(示例: rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1)");
+        }
+    }
+    
+    // 初始化棋盘
+    if (fen) {
+        parseFEN(fen); // 使用 FEN 初始化棋盘
+        // 启用人类交互的监听
+        enableHumanMove();
+    }
+}
+
+
 /* ====== 初始化与重置 ====== */
 function getMode() {
     const select = document.getElementById('mode-select');
@@ -83,6 +207,7 @@ function setModeListener() {
     const select = document.getElementById('mode-select');
     const sideSelection = document.getElementById('side-selection');
     const sideSelect = document.getElementById('side-select');
+    const pausecontainer = document.getElementById('pause-container');
     
     if (select) {
         select.addEventListener('change', function() {
@@ -90,10 +215,28 @@ function setModeListener() {
             // 只有人机对弈模式才显示选择执子方的选项
             if (mode === 'human-vs-ai') {
                 sideSelection.style.display = 'inline-block';
+                if (pausecontainer) pausecontainer.style.display = 'none'; // 人机对弈不显示暂停按钮
+                resetGame();
+            } else if (mode === 'ai-vs-ai') {
+                sideSelection.style.display = 'none';
+                console.log('AI对弈模式已启动');                
+                if (pausecontainer) 
+                {
+                    console.log("显示暂停按钮")
+                    pausecontainer.style.display = 'inline-block'; // AI对弈显示暂停按钮"
+                }
+                resetGame();
+            } else if (mode === 'record-mode') {
+                sideSelection.style.display = 'none';
+                if (pausecontainer) pausecontainer.style.display = 'none'; 
+                // 启动自定义棋局流程：要求输入 FEN
+                console.log('自定义棋局模式已启动');
+                promptForFENAndInit(); 
             } else {
                 sideSelection.style.display = 'none';
+                if (pausecontainer) pausecontainer.style.display = 'none'; // 其他模式不显示暂停按钮
+                resetGame();
             }
-            resetGame();
         });
     }
     
@@ -111,7 +254,9 @@ function resetGame() {
     const coordinates = box.querySelectorAll('.coordinate');
     const coordinateHTML = Array.from(coordinates).map(coord => coord.outerHTML).join('');
     
+    // 清除棋子DOM
     box.innerHTML = '<div class="grid-lines">'+(box.querySelector('.grid-lines') ? box.querySelector('.grid-lines').innerHTML : '')+'</div>' + coordinateHTML;
+
     board = Array.from({length:ROWS},()=>Array(COLS).fill(null));
     currentSide = 'red';
     gameOver = false;
@@ -121,7 +266,14 @@ function resetGame() {
     lastMoveFrom = null;
     movesHistory = [];
     hideStatus();
-    initPieces();
+    
+    // 如果是棋谱录制模式，则重新走 FEN 初始化流程
+    if (mode === 'record-mode') {
+        promptForFENAndInit(); 
+        return; // 阻止后续的 initPieces 和 AI 逻辑
+    }
+    
+    initPieces(); // 默认初始化（使用 initialPieces）
     
     // 根据人类执子方决定是否翻转棋盘
     if (humanSide === 'black' && !isBoardFlipped) {
@@ -164,7 +316,7 @@ function initPieces() {
         board[p.y][p.x] = el; // 存储在逻辑坐标系
       });
     });
-    enableHumanMove();
+    // 移除 enableHumanMove()，让 resetGame 统一控制
 }
 
 /* ====== 翻转棋盘（只影响显示） ====== */
@@ -379,6 +531,7 @@ async function tryMove(move) {
 
 /* ====== AI 移动 ====== */
 async function aiMove() {
+
   if (gameOver) return;
   if (isPaused) {
     showStatus('已暂停，点击"继续"可恢复');
@@ -405,7 +558,7 @@ async function aiMove() {
         });
     }
     const move = await response.json();
-    console.log('AI 移动（逻辑坐标）:', move);
+    // console.log('AI 移动（逻辑坐标）:', move);
     // 如果 move 为 null，表示 AI 认输
     if (move === null) {
         gameOver = true;
@@ -672,18 +825,23 @@ function initBoard(){
         });
     }
     
-    // 添加翻转棋盘按钮事件监听器
-    const flipBtn = document.getElementById('flip-btn');
-    if (flipBtn) flipBtn.addEventListener('click', flipBoard);
-    
-    // 初始化时根据模式设置执子方选择框的显示状态
+    // 初始化时根据模式设置执子方选择框和暂停按钮的显示状态
     const modeSelect = document.getElementById('mode-select');
     const sideSelection = document.getElementById('side-selection');
+    const pauseContainer = document.getElementById('pause-container'); // 确保获取到容器
+    
     if (modeSelect && sideSelection) {
-        if (modeSelect.value === 'human-vs-ai') {
+        // 初始模式
+        const initialMode = modeSelect.value;
+        if (initialMode === 'human-vs-ai') {
             sideSelection.style.display = 'inline-block';
-        } else {
+            if (pauseContainer) pauseContainer.style.display = 'none';
+        } else if (initialMode === 'ai-vs-ai') {
             sideSelection.style.display = 'none';
+            if (pauseContainer) pauseContainer.style.display = 'inline-block';
+        } else {
+             sideSelection.style.display = 'none';
+             if (pauseContainer) pauseContainer.style.display = 'none';
         }
     }
 }

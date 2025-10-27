@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>中国象棋棋盘</title>
+    <title>中国象棋</title>
     <script src="static/marked.min.js"></script>
     <script src="static/chess.js"></script> 
     <style>
@@ -346,8 +346,8 @@
                 <label for="mode-select" style="font-size:16px;color:#8b4513;font-weight:bold;">对弈模式：</label>
                 <select id="mode-select" style="font-size:16px;padding:4px 12px;vertical-align: middle;">
                     <option value="human-vs-ai">人机对弈</option>
-                    <option value="ai-vs-ai">AI对弈</option>
-                    <option value="record-mode">自定义局</option>
+                    <!-- <option value="ai-vs-ai">AI对弈</option> -->
+                    <option value="self-define-mode">自定义局</option>
                 </select>
                 <div id="side-selection" style="display: none; margin-left: 10px; display: inline-block; vertical-align: middle;">
                     <label for="side-select" style="font-size:16px;color:#8b4513;font-weight:bold;">选择执子方：</label>
@@ -361,7 +361,7 @@
                 </div>
             </div>
             <div class="chess-container">             
-                <div class="board-title">中国象棋</div>
+                <!-- <div class="board-title">中国象棋</div> -->
                 <div class="chessboard" id="chessboard">
                     <div class="grid-lines">
                         <div class="horizontal-line" style="top: 0;"></div>

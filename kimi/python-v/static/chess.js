@@ -1,6 +1,6 @@
 /* ========== 基础数据 ========== */
 const ROWS = 10, COLS = 9;
-const PRIMARY_BACKEND_URL = 'http://127.0.0.1:5000'; // 主后端服务器URL
+const PRIMARY_BACKEND_URL = 'https://xq.qzz8io.qzz.io/'; // 主后端服务器URL
 const FALLBACK_BACKEND_URL = 'http://127.0.0.1:5000'; // 备用后端服务器URL
 let BACKEND_URL = PRIMARY_BACKEND_URL; // 当前使用的后端URL
 
@@ -226,7 +226,7 @@ function setModeListener() {
                     pausecontainer.style.display = 'inline-block'; // AI对弈显示暂停按钮"
                 }
                 resetGame();
-            } else if (mode === 'record-mode') {
+            } else if (mode === 'self-define-mode') {
                 sideSelection.style.display = 'none';
                 if (pausecontainer) pausecontainer.style.display = 'none'; 
                 // 启动自定义棋局流程：要求输入 FEN
@@ -268,7 +268,7 @@ function resetGame() {
     hideStatus();
     
     // 如果是棋谱录制模式，则重新走 FEN 初始化流程
-    if (mode === 'record-mode') {
+    if (mode === 'self-define-mode') {
         promptForFENAndInit(); 
         return; // 阻止后续的 initPieces 和 AI 逻辑
     }
@@ -414,7 +414,7 @@ async function tryMove(move) {
     if (toX < 0 || toX >= COLS || toY < 0 || toY >= ROWS) return;
 
     // 棋谱录制：保存当前逻辑棋盘和走法
-    if (mode === 'record-mode') {
+    if (mode === 'self-define-mode') {
         const boardStateBeforeMove = cloneBoardToState(board);
         movesHistory.push({
             board: boardStateBeforeMove,
@@ -518,7 +518,7 @@ async function tryMove(move) {
         } else if (mode === 'human-vs-ai' && currentSide !== humanSide) {
             // 当前轮到AI行棋时自动调用AI移动
             setTimeout(aiMove, 1000);
-        } else if (mode === 'record-mode') {
+        } else if (mode === 'self-define-mode') {
             // 在棋谱录制模式下，启用双方手动操作
             enableHumanMove();  // 这会同时启用红方和黑方的操作
         } else {
@@ -743,7 +743,7 @@ function enableHumanMove() {
     // 先解绑所有 piece 的 onclick（防止重复绑定）
     document.querySelectorAll('.piece').forEach(el => el.onclick = null);
 
-    if (mode === 'record-mode') {
+    if (mode === 'self-define-mode') {
         // 棋谱录制：双方都可以点击
         document.querySelectorAll('.piece').forEach(el => {
             el.onclick = function(e) {
@@ -788,8 +788,8 @@ function enableHumanMove() {
         });
     }
 
-    // 如果是 record-mode 并且黑方需要手动走子，也要单独绑定黑子点击（可选）
-    if (mode === 'record-mode') {
+    // 如果是 self-define-mode 并且黑方需要手动走子，也要单独绑定黑子点击（可选）
+    if (mode === 'self-define-mode') {
         enableBlackHumanMove();
     }
 }
@@ -799,7 +799,7 @@ function enableBlackHumanMove() {
     document.querySelectorAll('.piece.black-piece').forEach(el => el.onclick = null);
     document.querySelectorAll('.piece.black-piece').forEach(el => {
         el.onclick = function(e) {
-            if (gameOver || isPaused || mode !== 'record-mode' || currentSide !== 'black') return;
+            if (gameOver || isPaused || mode !== 'self-define-mode' || currentSide !== 'black') return;
             clearHints();
             selectedPiece = el;
             const pos = findPiecePosition(el);

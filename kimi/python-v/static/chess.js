@@ -17,6 +17,7 @@ let lastMoveFrom = null; // 存储上一步的起点逻辑位置 {x, y}
 let movesHistory = []; // 存储走子历史
 let recordModePositions = []; // 存储棋谱录制模式下的位置信息
 let isBoardFlipped = false; // 视觉是否翻转（只影响显示）
+let customMode = 'delete'; // 当前自定义局操作模式
 
 /* 初始排布（使用逻辑坐标） */
 const initialPieces = {
@@ -68,128 +69,6 @@ async function checkAndSwitchBackend() {
     }
 }
 
-/* ====== FEN 解析函数 ====== */
-/**
- * 解析 FEN 字符串并初始化棋盘状态。
- * @param {string} fenString 格式如: rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1
- */
-function parseFEN(fenString) {
-    // 1. 清空当前棋盘 DOM 和逻辑 board
-    const box = document.getElementById('chessboard');
-    box.querySelectorAll('.piece').forEach(p => p.remove()); // 移除所有棋子DOM
-    board = Array.from({length:ROWS},()=>Array(COLS).fill(null));
-
-    // 2. 解析 FEN
-    const parts = fenString.split(' ');
-    const boardPart = parts[0]; // 棋子位置
-    const sidePart = parts[1];  // 当前行棋方
-
-    if (sidePart === 'w') { // FEN 中 'w' 是白方 (红方), 'b' 是黑方 (黑方)
-        currentSide = 'red';
-    } else if (sidePart === 'b') {
-        currentSide = 'black';
-    } else {
-        // 默认红方
-        currentSide = 'red';
-    }
-
-    // FEN 符号到棋子名称和颜色的映射
-    const pieceMap = {
-        'k': { n: '將', side: 'black' }, 'a': { n: '士', side: 'black' }, 'b': { n: '象', side: 'black' },
-        'n': { n: '馬', side: 'black' }, 'r': { n: '車', side: 'black' }, 'c': { n: '炮', side: 'black' },
-        'p': { n: '卒', side: 'black' },
-        'K': { n: '帥', side: 'red' }, 'A': { n: '仕', side: 'red' }, 'B': { n: '相', side: 'red' },
-        'N': { n: '馬', side: 'red' }, 'R': { n: '車', side: 'red' }, 'C': { n: '炮', side: 'red' },
-        'P': { n: '兵', side: 'red' }
-    };
-    console.log('pieceMap:', pieceMap);
-    
-    // 遍历 FEN 字符串部分
-    let logicY = 0; // 逻辑坐标 y (0-9)
-    let logicX = 0; // 逻辑坐标 x (0-8)
-
-    for (const char of boardPart) {
-        if (char === '/') {
-            // 换行
-            logicY++;
-            logicX = 0;
-            if (logicY >= ROWS) break;
-        } else if (char >= '1' && char <= '9') {
-            // 空格
-            const emptyCount = parseInt(char);
-            logicX += emptyCount;
-        } else if (pieceMap[char]) {
-            // 棋子
-            const pieceInfo = pieceMap[char];
-            const colorClass = pieceInfo.side === 'red' ? 'red-piece' : 'black-piece';
-
-            const el = document.createElement('div');
-            el.className = `piece ${colorClass}`;
-            el.textContent = pieceInfo.n;
-            
-            // 棋盘 DOM 位置
-            const disp = toDisplayCoord(logicX, logicY);
-            el.style.left = (25 + disp.x * 50 - 20) + 'px';
-            el.style.top  = (25 + disp.y * 50 - 20) + 'px';
-            box.appendChild(el);
-            
-            // 逻辑 board 存储
-            board[logicY][logicX] = el;
-            
-            logicX++;
-        }
-    }
-    
-    // 确保其他游戏状态重置
-    gameOver = false;
-    isBoardFlipped = false; // FEN 初始化后，默认不翻转，除非后续手动翻转
-    selectedPiece = null;
-    validMoves = [];
-    lastMoveFrom = null;
-    movesHistory = [];
-    hideStatus();
-}
-
-/* ====== FEN 输入并初始化 ====== */
-async function promptForFENAndInit() {
-    const defaultFEN = 'rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1'; // 默认初始布局
-    
-    let fen = null;
-    let valid = false;
-    
-    while (!valid) {
-        // 弹出对话框要求用户输入 FEN
-        fen = prompt("请输入棋局 FEN 字符串进行自定义初始化：", defaultFEN);
-        console.log('用户输入的 FEN:', fen);
-        
-        if (fen === null) {
-            // 用户点击取消，切换回人机对弈模式
-            const modeSelect = document.getElementById('mode-select');
-            modeSelect.value = 'human-vs-ai';
-            mode = 'human-vs-ai';
-            // 重新调用监听器以更新UI和重置游戏（会再次调用 resetGame）
-            // 注意：这里需要递归调用 setModeListener 的逻辑，但为避免无限循环，我们直接调用 resetGame
-            setModeListener(); // 确保 UI 更新
-            resetGame(); 
-            return;
-        }
-        
-        // 简单校验 FEN 格式（至少需要棋子部分和行棋方部分）
-        const parts = fen.split(' ');
-        if (parts.length >= 2 && parts[1].match(/^[wb]$/i)) {
-            valid = true;
-        } else {
-            alert("FEN 格式不正确，请重新输入。\n(示例: rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1)");
-        }
-    }
-    
-    // 初始化棋盘
-    if (fen) {
-        parseFEN(fen); // 使用 FEN 初始化棋盘
-        // 启用人类交互的监听
-        enableHumanMove();
-    }
-}
 
 
 /* ====== 初始化与重置 ====== */
@@ -228,10 +107,9 @@ function setModeListener() {
                 resetGame();
             } else if (mode === 'self-define-mode') {
                 sideSelection.style.display = 'none';
-                if (pausecontainer) pausecontainer.style.display = 'none'; 
-                // 启动自定义棋局流程：要求输入 FEN
-                console.log('自定义棋局模式已启动');
-                promptForFENAndInit(); 
+                if (pausecontainer) pausecontainer.style.display = 'none';
+                document.getElementById('custom-define-container').style.display = 'inline-block';
+                resetGameForCustom();
             } else {
                 sideSelection.style.display = 'none';
                 if (pausecontainer) pausecontainer.style.display = 'none'; // 其他模式不显示暂停按钮
@@ -269,8 +147,8 @@ function resetGame() {
     
     // 如果是棋谱录制模式，则重新走 FEN 初始化流程
     if (mode === 'self-define-mode') {
-        promptForFENAndInit(); 
-        return; // 阻止后续的 initPieces 和 AI 逻辑
+        resetGameForCustom();
+        return;
     }
     
     initPieces(); // 默认初始化（使用 initialPieces）
@@ -352,6 +230,149 @@ function flipBoard() {
     }
 }
 
+/* 自定义局重置 */
+function resetGameForCustom() {
+  const box = document.getElementById('chessboard');
+  box.querySelectorAll('.piece').forEach(p => p.remove());
+  board = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+  initPieces();
+  enableCustomMode();
+}
+
+// 放在全局函数部分（例如靠近其它辅助函数）
+async function doHint(side) {
+  currentSide = side;
+  // side: 'red' 或 'black'
+  if (gameOver) {
+    showStatus('游戏已结束');
+    return;
+  }
+  showStatus(`${side === 'red' ? '红方' : '黑方'} 正在计算提示...`);
+  const boardState = cloneBoardToState(board);
+  try {
+    let response;
+    try {
+      response = await fetch(`${BACKEND_URL}/ai_move`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ board: boardState, side })
+      });
+    } catch (err) {
+      await checkAndSwitchBackend();
+      response = await fetch(`${BACKEND_URL}/ai_move`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ board: boardState, side })
+      });
+    }
+    const move = await response.json();
+    if (!move) {
+      showStatus('AI 返回空走法（可能认输）');
+      return;
+    }
+    if (move.from && move.to) {
+      await tryMove(move);
+      showStatus(`${side === 'red' ? '红方' : '黑方'} 完成走棋`);
+    } else {
+      showStatus('未获取到合法走法');
+    }
+  } catch (err) {
+    console.error('提示失败:', err);
+    showStatus('提示失败，查看控制台日志');
+  } finally {
+    // 保持自定义模式仍然可重复点击 —— 不隐藏按钮，不做自动触发
+  }
+  
+}
+
+
+/* 自定义局操作逻辑 */
+function enableCustomMode() {
+  const customSelect = document.getElementById('custom-mode-select');
+  const hintBtn = document.getElementById('custom-hint-btn');
+  customMode = customSelect ? customSelect.value : 'delete';
+  if (customSelect) {
+    customSelect.onchange = () => {
+      customMode = customSelect.value;
+      enableCustomMode();
+    };
+  }
+
+  document.querySelectorAll('.piece').forEach(el => el.onclick = null);
+  const boardBox = document.getElementById('chessboard');
+  boardBox.onclick = null;
+
+  // 隐藏提示按钮默认状态
+  if (hintBtn) hintBtn.style.display = 'none';
+  if (hintBtn) hintBtn.onclick = null;
+
+  if (customMode === 'delete') {
+    document.querySelectorAll('.piece').forEach(el => {
+      el.onclick = () => {
+        const pos = findPiecePosition(el);
+        if (pos) {
+          board[pos.y][pos.x] = null;
+          el.remove();
+        }
+      };
+    });
+  } else if (customMode === 'move') {
+    let selected = null;
+    document.querySelectorAll('.piece').forEach(el => {
+      el.onclick = e => {
+        e.stopPropagation();
+        if (selected) selected.classList.remove('move-effect');
+        selected = el;
+        selected.classList.add('move-effect');
+      };
+    });
+
+    boardBox.onclick = e => {
+      const rect = boardBox.getBoundingClientRect();
+      // **【核心修改】**：首先计算出显示坐标系下的位置
+      const dispX = Math.floor((e.clientX - rect.left - 25) / 50);
+      const dispY = Math.floor((e.clientY - rect.top - 25) / 50);
+      
+      // 然后将显示坐标转换为逻辑坐标
+      const logicPos = toLogicCoord(dispX, dispY);
+      const x = logicPos.x; // 目标逻辑X
+      const y = logicPos.y; // 目标逻辑Y
+      if (selected && x >= 0 && x < COLS && y >= 0 && y < ROWS) {
+        const oldPos = findPiecePosition(selected);
+        if (oldPos) board[oldPos.y][oldPos.x] = null;
+        const target = board[y][x];
+        if (target) return;  // 目标位置有棋子，取消移动
+        board[y][x] = selected;
+        const disp = toDisplayCoord(x, y);
+        selected.style.left = (25 + disp.x * 50 - 20) + 'px';
+        selected.style.top = (25 + disp.y * 50 - 20) + 'px';
+        selected.classList.remove('move-effect');
+        selected = null;
+      }
+    };
+  } else if (customMode === 'hint-red' || customMode === 'hint-black') {
+      // 显示提示按钮，让用户每次点击按钮才触发一次提示
+      if (hintBtn) {
+        hintBtn.style.display = 'inline-block';
+        hintBtn.textContent = '提示';
+
+        // 绑定点击事件
+        const side = customMode === 'hint-red' ? 'red' : 'black';
+        hintBtn.onclick = () => {
+          doHint(side);
+        };
+    }
+  }else if (customMode === 'select-black'){
+     if (!isBoardFlipped) {
+        flipBoard();
+     }
+  }else if (customMode === 'select-red'){
+     if (isBoardFlipped) {
+        flipBoard();
+     }
+  }
+}
+
 /* ========== DOM & 坐标辅助函数 ========== */
 // 把 piece DOM 在 board 中找到其逻辑坐标（扫描 board）
 function findPiecePosition(el) {
@@ -414,29 +435,29 @@ async function tryMove(move) {
     if (toX < 0 || toX >= COLS || toY < 0 || toY >= ROWS) return;
 
     // 棋谱录制：保存当前逻辑棋盘和走法
-    if (mode === 'self-define-mode') {
-        const boardStateBeforeMove = cloneBoardToState(board);
-        movesHistory.push({
-            board: boardStateBeforeMove,
-            side: currentSide,
-            move: { from: {x: fromX, y: fromY}, to: {x: toX, y: toY} }
-        });
+    // if (mode === 'self-define-mode') {
+    //     const boardStateBeforeMove = cloneBoardToState(board);
+    //     movesHistory.push({
+    //         board: boardStateBeforeMove,
+    //         side: currentSide,
+    //         move: { from: {x: fromX, y: fromY}, to: {x: toX, y: toY} }
+    //     });
 
-        // 保存到后端数据库（逻辑坐标）
-        try {
-            await fetch(`${BACKEND_URL}/save_position`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    board: boardStateBeforeMove, 
-                    side: currentSide, 
-                    move: { from: {x: fromX, y: fromY}, to: {x: toX, y: toY} } 
-                })
-            });
-        } catch (error) {
-            console.error('保存位置信息失败:', error);
-        }
-    }
+    //     // 保存到后端数据库（逻辑坐标）
+    //     try {
+    //         await fetch(`${BACKEND_URL}/save_position`, {
+    //             method: 'POST',
+    //             headers: { 'Content-Type': 'application/json' },
+    //             body: JSON.stringify({ 
+    //                 board: boardStateBeforeMove, 
+    //                 side: currentSide, 
+    //                 move: { from: {x: fromX, y: fromY}, to: {x: toX, y: toY} } 
+    //             })
+    //         });
+    //     } catch (error) {
+    //         console.error('保存位置信息失败:', error);
+    //     }
+    // }
 
     const pieceEl = board[fromY][fromX];
     if (!pieceEl) return;

@@ -18,6 +18,9 @@ let movesHistory = []; // 存储走子历史
 let recordModePositions = []; // 存储棋谱录制模式下的位置信息
 let isBoardFlipped = false; // 视觉是否翻转（只影响显示）
 let customMode = 'delete'; // 当前自定义局操作模式
+let isFreeMoveMode = false; // 是否处于自由移子模式
+
+
 
 /* 初始排布（使用逻辑坐标） */
 const initialPieces = {
@@ -87,6 +90,7 @@ function setModeListener() {
     const sideSelection = document.getElementById('side-selection');
     const sideSelect = document.getElementById('side-select');
     const pausecontainer = document.getElementById('pause-container');
+    const movebtn = document.getElementById('move-piece-btn');
     
     if (select) {
         select.addEventListener('change', function() {
@@ -95,6 +99,7 @@ function setModeListener() {
             if (mode === 'human-vs-ai') {
                 sideSelection.style.display = 'inline-block';
                 if (pausecontainer) pausecontainer.style.display = 'none'; // 人机对弈不显示暂停按钮
+                document.getElementById('custom-define-container').style.display = 'none';
                 resetGame();
             } else if (mode === 'ai-vs-ai') {
                 sideSelection.style.display = 'none';
@@ -108,6 +113,7 @@ function setModeListener() {
             } else if (mode === 'self-define-mode') {
                 sideSelection.style.display = 'none';
                 if (pausecontainer) pausecontainer.style.display = 'none';
+                if (movebtn) movebtn.style.display = 'none';
                 document.getElementById('custom-define-container').style.display = 'inline-block';
                 resetGameForCustom();
             } else {
@@ -174,6 +180,10 @@ function resetGame() {
         // 启用人类交互的监听
         enableHumanMove();
     }
+    const movePieceBtn = document.getElementById('move-piece-btn');
+    const retryBtn = document.getElementById('retry-ai-btn');
+    if (movePieceBtn) movePieceBtn.style.display = (mode === 'human-vs-ai') ? 'inline-block' : 'none';
+    if (retryBtn) retryBtn.style.display = 'none';
 }
 
 /* ====== 初始化棋子（逻辑 -> 显示） ====== */
@@ -317,39 +327,40 @@ function enableCustomMode() {
       };
     });
   } else if (customMode === 'move') {
-    let selected = null;
-    document.querySelectorAll('.piece').forEach(el => {
-      el.onclick = e => {
-        e.stopPropagation();
-        if (selected) selected.classList.remove('move-effect');
-        selected = el;
-        selected.classList.add('move-effect');
-      };
-    });
+    enableFreeMove(true);
+    // let selected = null;
+    // document.querySelectorAll('.piece').forEach(el => {
+    //   el.onclick = e => {
+    //     e.stopPropagation();
+    //     if (selected) selected.classList.remove('move-effect');
+    //     selected = el;
+    //     selected.classList.add('move-effect');
+    //   };
+    // });
 
-    boardBox.onclick = e => {
-      const rect = boardBox.getBoundingClientRect();
-      // **【核心修改】**：首先计算出显示坐标系下的位置
-      const dispX = Math.floor((e.clientX - rect.left - 25) / 50);
-      const dispY = Math.floor((e.clientY - rect.top - 25) / 50);
+    // boardBox.onclick = e => {
+    //   const rect = boardBox.getBoundingClientRect();
+    //   // **【核心修改】**：首先计算出显示坐标系下的位置
+    //   const dispX = Math.floor((e.clientX - rect.left - 25) / 50);
+    //   const dispY = Math.floor((e.clientY - rect.top - 25) / 50);
       
-      // 然后将显示坐标转换为逻辑坐标
-      const logicPos = toLogicCoord(dispX, dispY);
-      const x = logicPos.x; // 目标逻辑X
-      const y = logicPos.y; // 目标逻辑Y
-      if (selected && x >= 0 && x < COLS && y >= 0 && y < ROWS) {
-        const oldPos = findPiecePosition(selected);
-        if (oldPos) board[oldPos.y][oldPos.x] = null;
-        const target = board[y][x];
-        if (target) return;  // 目标位置有棋子，取消移动
-        board[y][x] = selected;
-        const disp = toDisplayCoord(x, y);
-        selected.style.left = (25 + disp.x * 50 - 20) + 'px';
-        selected.style.top = (25 + disp.y * 50 - 20) + 'px';
-        selected.classList.remove('move-effect');
-        selected = null;
-      }
-    };
+    //   // 然后将显示坐标转换为逻辑坐标
+    //   const logicPos = toLogicCoord(dispX, dispY);
+    //   const x = logicPos.x; // 目标逻辑X
+    //   const y = logicPos.y; // 目标逻辑Y
+    //   if (selected && x >= 0 && x < COLS && y >= 0 && y < ROWS) {
+    //     const oldPos = findPiecePosition(selected);
+    //     if (oldPos) board[oldPos.y][oldPos.x] = null;
+    //     const target = board[y][x];
+    //     if (target) return;  // 目标位置有棋子，取消移动
+    //     board[y][x] = selected;
+    //     const disp = toDisplayCoord(x, y);
+    //     selected.style.left = (25 + disp.x * 50 - 20) + 'px';
+    //     selected.style.top = (25 + disp.y * 50 - 20) + 'px';
+    //     selected.classList.remove('move-effect');
+    //     selected = null;
+    //   }
+    // };
   } else if (customMode === 'hint-red' || customMode === 'hint-black') {
       // 显示提示按钮，让用户每次点击按钮才触发一次提示
       if (hintBtn) {
@@ -550,6 +561,51 @@ async function tryMove(move) {
     clearHints();
 }
 
+function enableFreeMove(enable) {
+    document.querySelectorAll('.piece').forEach(el => el.onclick = null);
+    const boardBox = document.getElementById('chessboard');
+
+    if (!enable) {
+        enableHumanMove();
+        return;
+    }
+
+    let selected = null;
+    boardBox.onclick = null;
+
+    document.querySelectorAll('.piece').forEach(el => {
+        el.onclick = e => {
+            e.stopPropagation();
+            if (selected) selected.classList.remove('move-effect');
+            selected = el;
+            selected.classList.add('move-effect');
+        };
+    });
+
+    boardBox.onclick = e => {
+        if (!selected) return;
+        const rect = boardBox.getBoundingClientRect();
+        const dispX = Math.floor((e.clientX - rect.left - 25) / 50);
+        const dispY = Math.floor((e.clientY - rect.top - 25) / 50);
+        const logicPos = toLogicCoord(dispX, dispY);
+        const x = logicPos.x, y = logicPos.y;
+        if (x < 0 || x >= COLS || y < 0 || y >= ROWS) return;
+
+        const oldPos = findPiecePosition(selected);
+        if (oldPos) board[oldPos.y][oldPos.x] = null;
+        const target = board[y][x];
+        if (target) return;
+        board[y][x] = selected;
+
+        const disp = toDisplayCoord(x, y);
+        selected.style.left = (25 + disp.x * 50 - 20) + 'px';
+        selected.style.top = (25 + disp.y * 50 - 20) + 'px';
+        selected.classList.remove('move-effect');
+        selected = null;
+    };
+}
+
+
 /* ====== AI 移动 ====== */
 async function aiMove() {
 
@@ -569,14 +625,11 @@ async function aiMove() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ board: boardState, side: currentSide })
         });
-    } catch (error) {
-        // 如果主URL失败，尝试切换到备用URL
-        await checkAndSwitchBackend();
-        response = await fetch(`${BACKEND_URL}/ai_move`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ board: boardState, side: currentSide })
-        });
+    } catch (error) {        
+        console.error('AI move error:', error);
+        showStatus('AI走棋失败，请点击“重试AI走棋”按钮重试');
+        const retryBtn = document.getElementById('retry-ai-btn');
+        if (retryBtn) retryBtn.style.display = 'inline-block';       
     }
     const move = await response.json();
     // console.log('AI 移动（逻辑坐标）:', move);
@@ -836,6 +889,22 @@ function initBoard(){
     setModeListener();
     resetGame();
     const pauseBtn = document.getElementById('pause-btn');
+    // ====== 移子功能 ======
+    const movePieceBtn = document.getElementById('move-piece-btn');    
+    if (movePieceBtn) {
+        movePieceBtn.addEventListener('click', () => {
+            if (mode !== 'human-vs-ai') {
+                showStatus('仅在人机对弈模式下可用');
+                return;
+            }
+            isFreeMoveMode = !isFreeMoveMode;
+            movePieceBtn.textContent = isFreeMoveMode ? '退出移子' : '移子';
+            // retryBtn.style.display = isFreeMoveMode ? 'inline-block' : 'none';
+            showStatus(isFreeMoveMode ? '进入自由移子模式，可拖动棋子调整局面' : '退出移子模式');
+            enableFreeMove(isFreeMoveMode);
+        });
+    }
+
     if (pauseBtn) {
         pauseBtn.addEventListener('click', function() {
             isPaused = !isPaused;
@@ -864,6 +933,22 @@ function initBoard(){
              sideSelection.style.display = 'none';
              if (pauseContainer) pauseContainer.style.display = 'none';
         }
+    }
+
+    const retryBtn = document.getElementById('retry-ai-btn');
+    if (retryBtn) {
+        retryBtn.addEventListener('click', async () => {
+        retryBtn.style.display = 'none';       
+        showStatus('重新请求AI走棋中...');
+        try {
+            await aiMove();
+            hideStatus();
+        } catch (err) {
+            console.error('重试AI失败:', err);
+            showStatus('重试AI失败，请检查网络或后端');
+            retryBtn.style.display = 'inline-block';
+        }
+    });
     }
 }
 

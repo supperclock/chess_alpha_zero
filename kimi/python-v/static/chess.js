@@ -180,10 +180,13 @@ function resetGame() {
         // 启用人类交互的监听
         enableHumanMove();
     }
-    const movePieceBtn = document.getElementById('move-piece-btn');
+    // const movePieceBtn = document.getElementById('move-piece-btn');
     const retryBtn = document.getElementById('retry-ai-btn');
-    if (movePieceBtn) movePieceBtn.style.display = (mode === 'human-vs-ai') ? 'inline-block' : 'none';
+    // if (movePieceBtn) movePieceBtn.style.display = (mode === 'human-vs-ai') ? 'inline-block' : 'none';
     if (retryBtn) retryBtn.style.display = 'none';
+    const undoBtn = document.getElementById('undo-btn');
+    if (undoBtn) undoBtn.style.display = (mode === 'human-vs-ai') ? 'inline-block' : 'none';
+
 }
 
 /* ====== 初始化棋子（逻辑 -> 显示） ====== */
@@ -440,6 +443,13 @@ async function tryMove(move) {
     const fromY = move.from.y;
     const toX = move.to.x;
     const toY = move.to.y;
+
+    // === 记录当前局面（用于悔棋） ===
+    const snapshot = {
+        boardState: cloneBoardToState(board),
+        currentSide: currentSide,
+    };
+    movesHistory.push(snapshot);
 
     // 防护
     if (fromX < 0 || fromX >= COLS || fromY < 0 || fromY >= ROWS) return;
@@ -812,6 +822,54 @@ function canMoveOn(fx, fy, tx, ty, side) {
     return false;
 }
 
+function restoreBoardFromState(state) {
+    const box = document.getElementById('chessboard');
+    box.querySelectorAll('.piece').forEach(p => p.remove());
+    board = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+
+    for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+            const cell = state[y][x];
+            if (cell) {
+                const el = document.createElement('div');
+                el.className = `piece ${cell.side}-piece`;
+                el.textContent = cell.type;
+                const disp = toDisplayCoord(x, y);
+                el.style.left = (25 + disp.x * 50 - 20) + 'px';
+                el.style.top  = (25 + disp.y * 50 - 20) + 'px';
+                box.appendChild(el);
+                board[y][x] = el;
+            }
+        }
+    }
+
+    // 重新绑定点击事件
+    enableHumanMove();
+}
+
+function undoLastTwoMoves() {
+    if (movesHistory.length < 2) {
+        showStatus('无法悔棋：还没有足够的走棋记录');
+        return;
+    }
+
+    // 撤销最近两步（玩家 + AI 各一步）
+    movesHistory.pop(); // 移除最新一步（AI）
+    const previous = movesHistory.pop(); // 获取上一个局面
+
+    if (!previous || !previous.boardState) {
+        showStatus('悔棋失败：记录不完整');
+        return;
+    }
+
+    // 还原棋盘状态
+    restoreBoardFromState(previous.boardState);
+    currentSide = previous.currentSide;
+    gameOver = false;
+    hideStatus();
+    showStatus('已悔棋，轮到玩家继续');
+}
+
 /* ====== 启用人类操作（点击事件绑定） ====== */
 function enableHumanMove() {
     // 先解绑所有 piece 的 onclick（防止重复绑定）
@@ -890,20 +948,20 @@ function initBoard(){
     resetGame();
     const pauseBtn = document.getElementById('pause-btn');
     // ====== 移子功能 ======
-    const movePieceBtn = document.getElementById('move-piece-btn');    
-    if (movePieceBtn) {
-        movePieceBtn.addEventListener('click', () => {
-            if (mode !== 'human-vs-ai') {
-                showStatus('仅在人机对弈模式下可用');
-                return;
-            }
-            isFreeMoveMode = !isFreeMoveMode;
-            movePieceBtn.textContent = isFreeMoveMode ? '退出移子' : '移子';
-            // retryBtn.style.display = isFreeMoveMode ? 'inline-block' : 'none';
-            showStatus(isFreeMoveMode ? '进入自由移子模式，可拖动棋子调整局面' : '退出移子模式');
-            enableFreeMove(isFreeMoveMode);
-        });
-    }
+    // const movePieceBtn = document.getElementById('move-piece-btn');    
+    // if (movePieceBtn) {
+    //     movePieceBtn.addEventListener('click', () => {
+    //         if (mode !== 'human-vs-ai') {
+    //             showStatus('仅在人机对弈模式下可用');
+    //             return;
+    //         }
+    //         isFreeMoveMode = !isFreeMoveMode;
+    //         movePieceBtn.textContent = isFreeMoveMode ? '退出移子' : '移子';
+    //         // retryBtn.style.display = isFreeMoveMode ? 'inline-block' : 'none';
+    //         showStatus(isFreeMoveMode ? '进入自由移子模式，可拖动棋子调整局面' : '退出移子模式');
+    //         enableFreeMove(isFreeMoveMode);
+    //     });
+    // }
 
     if (pauseBtn) {
         pauseBtn.addEventListener('click', function() {
@@ -914,6 +972,16 @@ function initBoard(){
             }
         });
     }
+    const undoBtn = document.getElementById('undo-btn');
+    if (undoBtn) {
+    undoBtn.addEventListener('click', () => {
+        if (mode !== 'human-vs-ai') {
+            showStatus('仅在人机对弈模式下可用');
+            return;
+        }
+        undoLastTwoMoves();
+    });
+}
     
     // 初始化时根据模式设置执子方选择框和暂停按钮的显示状态
     const modeSelect = document.getElementById('mode-select');
